@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#0f4c81">
+    <title>Scanner QR Code et OCR</title>
+
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+
+    <style>
+        :root { color-scheme: light; --primary:#0f4c81; --bg:#eef2f7; --text:#1f2937; }
+        * { box-sizing: border-box; }
+        body { margin:0; padding:16px; background:var(--bg); color:var(--text); font-family:Arial,sans-serif; }
+        .container { width:100%; max-width:1200px; margin:auto; }
+        .card { margin-bottom:16px; padding:20px; background:#fff; border-radius:16px; box-shadow:0 6px 22px rgba(15,76,129,.08); }
+        h1 { margin:0 0 8px; color:var(--primary); font-size:26px; }
+        h2 { margin:0 0 14px; font-size:20px; }
+        p { line-height:1.45; }
+        label { display:block; margin:14px 0 6px; font-weight:700; }
+        input, textarea, button { width:100%; padding:12px; border-radius:10px; font-size:16px; }
+        input, textarea { border:1px solid #cbd5e1; background:#fff; }
+        textarea { min-height:120px; resize:vertical; }
+        button { margin-top:12px; border:0; background:var(--primary); color:#fff; font-weight:700; cursor:pointer; }
+        button.secondary { background:#475569; }
+        button.danger { width:auto; padding:8px 12px; background:#b91c1c; }
+        button:disabled { opacity:.6; cursor:not-allowed; }
+        #reader { width:100%; overflow:hidden; border:1px solid #dbe3ec; border-radius:12px; }
+        #reader video { border-radius:10px; }
+        .input-with-action { display:flex; gap:8px; align-items:center; }
+        .input-with-action input { min-width:0; }
+        button.scan-icon-button { flex:0 0 48px; width:48px; height:48px; margin:0; padding:10px; }
+        .scan-icon-button svg { display:block; width:24px; height:24px; }
+        .qr-dialog { width:min(520px,calc(100% - 32px)); max-height:90vh; padding:20px; border:0; border-radius:16px; box-shadow:0 12px 40px rgba(15,23,42,.3); }
+        .qr-dialog::backdrop { background:rgba(15,23,42,.72); }
+        .qr-dialog-header { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:14px; }
+        .qr-dialog-header h2 { margin:0; }
+        button.qr-dialog-close { width:auto; margin:0; padding:8px 12px; }
+        .qr-camera-field { margin:0 0 12px; }
+        .qr-camera-field label { margin:0 0 6px; }
+        .qr-camera-field select { width:100%; padding:10px; border:1px solid #cbd5e1; border-radius:10px; background:#fff; font-size:16px; }
+        .qr-camera-field select:disabled { opacity:.6; }
+        #lotQrReader { width:100%; overflow:hidden; border:1px solid #dbe3ec; border-radius:12px; }
+        #imagePreview { display:none; width:100%; max-height:420px; margin-top:14px; object-fit:contain; border-radius:10px; background:#f8fafc; }
+        .saved-image { display:block; max-width:100%; max-height:240px; margin-top:10px; object-fit:contain; border-radius:8px; }
+        .status { display:none; margin-top:14px; padding:12px; border-radius:10px; line-height:1.4; }
+        .status.info { display:block; background:#dbeafe; color:#1e40af; }
+        .status.success { display:block; background:#dcfce7; color:#166534; }
+        .status.error { display:block; background:#fee2e2; color:#991b1b; }
+        .scan-item { margin-top:12px; padding:14px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; }
+        .scan-row { display:flex; gap:12px; justify-content:space-between; align-items:flex-start; }
+        .scan-date, .muted { color:#64748b; font-size:13px; }
+        .value { overflow-wrap:anywhere; white-space:pre-wrap; }
+        .auth-panel { display:grid; grid-template-columns:1fr 1fr auto auto; gap:10px; align-items:end; }
+        .auth-panel label { margin:0 0 6px; }
+        .auth-panel .auth-field { min-width:0; }
+        .auth-panel button { width:auto; margin:0; white-space:nowrap; }
+        #authMessage { grid-column:1/-1; margin:0; }
+        #signedInAs[hidden], #authLogout[hidden], #authLogin[hidden], #authUsernameField[hidden], #authPasswordField[hidden] { display:none; }
+        @media (max-width:520px) { body{padding:10px}.card{padding:16px}.scan-row{display:block}.danger{margin-top:10px} }
+    </style>
+    <link rel="stylesheet" href="app-shell.css">
+    <script src="app-navigation.js" defer></script>
+</head>
+<body>
+<div class="container">
+    <section class="card">
+        <h1>Scan QR Code et OCR</h1>
+        <p>Scannez un QR Code ou photographiez un document, vérifiez les données puis enregistrez-les avec l'image sélectionnée.</p>
+        <div class="auth-panel">
+            <div id="authUsernameField" class="auth-field"><label for="authUsername">Utilisateur</label><input id="authUsername" autocomplete="username"></div>
+            <div id="authPasswordField" class="auth-field"><label for="authPassword">Mot de passe</label><input id="authPassword" type="password" autocomplete="current-password"></div>
+            <button id="authLogin" type="button">Connexion</button>
+            <button id="authLogout" class="secondary" type="button" hidden>Déconnexion</button>
+            <strong id="signedInAs" hidden></strong>
+            <div id="authMessage" class="status"></div>
+        </div>
+        <div id="appStatus" class="status"></div>
+    </section>
+
+    <section id="stockWithdrawalCard" class="card" hidden>
+        <h2>Sortie de stock</h2>
+        <p class="muted">Recherchez un article en stock, sélectionnez-le et indiquez la quantité à retirer.</p>
+        <label for="stockProductSearch">Rechercher un produit</label>
+        <input id="stockProductSearch" type="search" placeholder="Dénomination, lot ou numéro de série">
+        <label for="stockProductSelect">Produit</label>
+        <select id="stockProductSelect">
+            <option value="">Chargement du stock...</option>
+        </select>
+        <div id="stockAvailability" class="muted" aria-live="polite"></div>
+        <label for="stockWithdrawalQuantity">Quantité demandée</label>
+        <input id="stockWithdrawalQuantity" type="number" min="1" step="1" value="1">
+        <button id="withdrawStockButton" type="button" disabled>Retirer du stock</button>
+        <button id="refreshStockButton" class="secondary" type="button">Actualiser le stock</button>
+        <div id="stockWithdrawalStatus" class="status"></div>
+    </section>
+
+    <section class="card">
+        <h2>1. Scanner un QR Code</h2>
+        <div id="reader"></div>
+        <label for="qrCode">Contenu du QR Code</label>
+        <input id="qrCode" type="text" placeholder="Le résultat apparaîtra ici" autocomplete="off">
+        <p class="muted">Sur téléphone, la caméra nécessite généralement une page HTTPS. Le choix d'une image QR reste disponible dans le scanner.</p>
+    </section>
+
+    <section class="card">
+        <h2>2. Reconnaissance OCR</h2>
+        <label for="ocrImage">Prendre une photo ou sélectionner une image</label>
+        <input id="ocrImage" type="file" accept="image/*" capture="environment">
+        <img id="imagePreview" alt="Aperçu de l'image sélectionnée">
+        <button id="ocrButton" type="button">Lancer la reconnaissance OCR</button>
+        <label for="ocrText">Texte détecté</label>
+        <textarea id="ocrText" placeholder="Le texte reconnu apparaîtra ici"></textarea>
+        <div id="ocrStatus" class="status"></div>
+    </section>
+
+    <section class="card">
+        <h2>3. Vérifier et enregistrer</h2>
+        <label for="nom">Nom ou désignation</label>
+        <input id="nom" type="text" maxlength="255">
+        <label for="reference">Référence</label>
+        <input id="reference" type="text" maxlength="255">
+        <label for="numeroSerie">Numéro de série</label>
+        <input id="numeroSerie" type="text" maxlength="255">
+        <label for="datePeremption">Date de péremption</label>
+        <input id="datePeremption" type="date">        <label for="numeroLot">Numéro de lot</label>
+        <div class="input-with-action">
+            <input id="numeroLot" type="text" maxlength="255">
+            <button id="scanLotButton" class="scan-icon-button" type="button" aria-label="Scanner le QR Code du numéro de lot" title="Scanner le QR Code du numéro de lot">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                    <path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/>
+                    <path d="M7 7h4v4H7zM15 7h2M15 11h2M7 15h2v2H7zM13 14v4M17 14v1M17 18h2"/>
+                </svg>
+            </button>
+        </div>
+        <label for="commentaire">Commentaire</label>
+        <textarea id="commentaire"></textarea>
+        <button id="saveButton" type="button" disabled>Enregistrer en base de données</button>
+        <div id="saveStatus" class="status"></div>
+    </section>
+
+    <section class="card">
+        <h2>Derniers enregistrements</h2>
+        <button id="refreshButton" class="secondary" type="button">Actualiser la liste</button>
+        <div id="scanList"></div>
+    </section>
+</div>
+
+<dialog id="lotQrDialog" class="qr-dialog" aria-labelledby="lotQrTitle">
+    <div class="qr-dialog-header">
+        <h2 id="lotQrTitle">Scanner le numéro de lot</h2>
+        <button id="closeLotQrButton" class="secondary qr-dialog-close" type="button">Fermer</button>
+    </div>
+    <div class="qr-camera-field">
+        <label for="lotQrCamera">Caméra</label>
+        <select id="lotQrCamera" disabled>
+            <option value="">Recherche des caméras...</option>
+        </select>
+    </div>
+    <div id="lotQrReader"></div>
+    <div id="lotQrStatus" class="status"></div>
+</dialog>
+
+<script src="auth.js"></script>
+<script src="gs1.js"></script>
+<script>
+'use strict';
+
+// Le nom d'hôte utilisé pour afficher la page est également utilisé pour joindre l'API.
+// Exemple : page sur http://192.168.1.50:5500 -> API sur http://192.168.1.50:8000
+const API_URL = window.location.protocol === 'https:'
+    ? window.location.origin
+    : `${window.location.protocol}//${window.location.hostname}:8000`;
+
+const $ = (id) => document.getElementById(id);
+const appStatus = $('appStatus');
+const qrCodeInput = $('qrCode');
+const ocrImageInput = $('ocrImage');
+const imagePreview = $('imagePreview');
+const ocrText = $('ocrText');
+const ocrButton = $('ocrButton');
+const ocrStatus = $('ocrStatus');
+const saveStatus = $('saveStatus');
+const saveButton = $('saveButton');
+const refreshButton = $('refreshButton');
+const scanList = $('scanList');
+const scanLotButton = $('scanLotButton');
+const lotQrDialog = $('lotQrDialog');
+const lotQrStatus = $('lotQrStatus');
+const closeLotQrButton = $('closeLotQrButton');
+const lotQrCameraSelect = $('lotQrCamera');
+const authUsername = $('authUsername');
+const authPassword = $('authPassword');
+const authLoginButton = $('authLogin');
+const authLogoutButton = $('authLogout');
+const authMessage = $('authMessage');
+const signedInAs = $('signedInAs');
+const stockProductSearch = $('stockProductSearch');
+const stockProductSelect = $('stockProductSelect');
+const stockWithdrawalQuantity = $('stockWithdrawalQuantity');
+const withdrawStockButton = $('withdrawStockButton');
+
+let selectedImage = null;
+let previewUrl = null;
+let lastQrCode = null;
+let ocrWorker = null;
+let qrScanner = null;
+let lotQrScanner = null;
+let lotQrStartup = null;
+let resumeQrScanner = false;
+let lotQrClosing = false;
+let lotQrResultHandled = false;
+let currentUser = window.AppAuth.user();
+let imageObjectUrls = [];
+let stockItems = [];
+
+function showStatus(element, message, type = 'info') {
+    element.textContent = message;
+    element.className = `status ${type}`;
+}
+function hideStatus(element) {
+    element.textContent = '';
+    element.className = 'status';
+}
+
+function updateAuthState() {
+    const signedIn = Boolean(currentUser);
+    const authMenu = document.querySelector('.app-auth-menu');
+    const authMenuSummary = authMenu?.querySelector('summary');
+    $('authUsernameField').hidden = signedIn;
+    $('authPasswordField').hidden = signedIn;
+    authLoginButton.hidden = signedIn;
+    authLogoutButton.hidden = !signedIn;
+    signedInAs.hidden = !signedIn;
+    signedInAs.textContent = signedIn
+        ? `Connecté : ${currentUser.username} (${
+            currentUser.role === 'superadmin' ? 'SuperAdmin'
+                : currentUser.role === 'admin' ? 'administrateur' : 'utilisateur'
+        })`
+        : '';
+    if (authMenuSummary) {
+        authMenuSummary.textContent = signedIn ? `Connecté : ${currentUser.username}` : 'Connexion';
+        authMenuSummary.setAttribute(
+            'aria-label',
+            signedIn ? `Compte ${currentUser.username}` : 'Ouvrir la connexion'
+        );
+        authMenu.open = !signedIn;
+    }
+    saveButton.disabled = !signedIn;
+    refreshButton.disabled = !signedIn;
+    $('stockWithdrawalCard').hidden = !signedIn;
+    if (!signedIn) {
+        stockItems = [];
+        renderStockOptions();
+    }
+    showStatus(authMessage, signedIn
+        ? `Session ${
+            currentUser.role === 'superadmin' ? 'SuperAdmin'
+                : currentUser.role === 'admin' ? 'administrateur' : 'utilisateur'
+        } ouverte.`
+        : 'Connectez-vous pour enregistrer et consulter les scans.', signedIn ? 'success' : 'info');
+}
+
+async function login() {
+    authLoginButton.disabled = true;
+    try {
+        currentUser = await window.AppAuth.login(authUsername.value.trim(), authPassword.value);
+        authPassword.value = '';
+        updateAuthState();
+        await Promise.all([loadScans(), loadStockItems()]);
+    } catch (error) {
+        showStatus(authMessage, `Connexion impossible : ${error.message}`, 'error');
+    } finally {
+        authLoginButton.disabled = false;
+    }
+}
+
+function logout() {
+    window.AppAuth.logout();
+    currentUser = null;
+    updateAuthState();
+    imageObjectUrls.forEach((url) => URL.revokeObjectURL(url));
+    imageObjectUrls = [];
+    scanList.textContent = 'Connectez-vous pour consulter les enregistrements.';
+}
+
+function expireSession() {
+    logout();
+    showStatus(authMessage, 'Votre session a expiré. Connectez-vous à nouveau.', 'error');
+}
+
+authLoginButton.addEventListener('click', login);
+authLogoutButton.addEventListener('click', logout);
+stockProductSearch.addEventListener('input', renderStockOptions);
+stockProductSelect.addEventListener('change', updateStockAvailability);
+stockWithdrawalQuantity.addEventListener('input', updateStockAvailability);
+$('refreshStockButton').addEventListener('click', loadStockItems);
+withdrawStockButton.addEventListener('click', withdrawStockItem);
+authPassword.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') login();
+});
+authUsername.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') authPassword.focus();
+});
+
+async function checkApi() {
+    try {
+        const response = await fetch(`${API_URL}/api/health`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        showStatus(appStatus, `API connectée : ${API_URL}`, 'success');
+    } catch (error) {
+        showStatus(appStatus, `API inaccessible sur ${API_URL}. Vérifiez que FastAPI fonctionne sur le port 8000 et que le pare-feu autorise ce port.`, 'error');
+    }
+}
+
+function applyGs1(decodedText) {
+    const data = window.Gs1.parse(decodedText);
+    if (!window.Gs1.isGs1(data)) return false;
+    if (data.gtin) $('reference').value = data.gtin;
+    if (data.serial) $('numeroSerie').value = data.serial;
+    if (data.lot) $('numeroLot').value = data.lot;
+    if (data.expiration) $('datePeremption').value = data.expiration;
+    return true;
+}
+
+function initQrScanner() {
+    if (typeof Html5QrcodeScanner === 'undefined') {
+        showStatus(appStatus, "La bibliothèque QR Code n'a pas pu être chargée. Vérifiez la connexion Internet.", 'error');
+        return;
+    }
+
+    qrScanner = new Html5QrcodeScanner('reader', {
+        formatsToSupport: window.Gs1.scannerFormats(),
+        fps: 10,
+        qrbox: { width: 230, height: 230 },
+        aspectRatio: 1.0,
+        rememberLastUsedCamera: true,
+        supportedScanTypes: [
+            Html5QrcodeScanType.SCAN_TYPE_CAMERA,
+            Html5QrcodeScanType.SCAN_TYPE_FILE
+        ]
+    }, false);
+
+    qrScanner.render((decodedText) => {
+        if (decodedText === lastQrCode) return;
+        lastQrCode = decodedText;
+        qrCodeInput.value = decodedText;
+        if (applyGs1(decodedText)) {
+            showStatus(appStatus, 'Code détecté : code produit (01), péremption (17) et numéro de série (21) renseignés.', 'success');
+        } else {
+            if (!$('reference').value) $('reference').value = decodedText;
+            showStatus(appStatus, 'QR Code détecté avec succès.', 'success');
+        }
+        if (navigator.vibrate) navigator.vibrate(120);
+    }, () => {});
+}
+
+async function closeLotQrScanner() {
+    if (lotQrClosing) return;
+    lotQrClosing = true;
+    try {
+        if (lotQrStartup) {
+            await lotQrStartup;
+        }
+        if (lotQrScanner) {
+            if (lotQrScanner.isScanning) await lotQrScanner.stop();
+            await lotQrScanner.clear();
+            lotQrScanner = null;
+        }
+        if (resumeQrScanner && qrScanner) {
+            qrScanner.resume();
+            resumeQrScanner = false;
+        }
+        if (lotQrDialog.open) lotQrDialog.close();
+    } finally {
+        lotQrClosing = false;
+    }
+}
+
+scanLotButton.addEventListener('click', async () => {
+    if (typeof Html5Qrcode === 'undefined') {
+        showStatus(saveStatus, "La bibliothèque QR Code n'a pas pu être chargée.", 'error');
+        return;
+    }
+
+    lotQrDialog.showModal();
+    lotQrResultHandled = false;
+    lotQrCameraSelect.disabled = true;
+    lotQrCameraSelect.replaceChildren(new Option('Recherche des caméras...', ''));
+    showStatus(lotQrStatus, 'Recherche des caméras disponibles...', 'info');
+    if (qrScanner && qrScanner.getState() === Html5QrcodeScannerState.SCANNING) {
+        qrScanner.pause(true);
+        resumeQrScanner = true;
+    }
+
+    lotQrScanner = new Html5Qrcode('lotQrReader', { formatsToSupport: window.Gs1.scannerFormats() });
+    try {
+        const cameras = await Html5Qrcode.getCameras();
+        if (!lotQrDialog.open) return;
+        if (!cameras.length) throw new Error('Aucune caméra disponible.');
+
+        lotQrCameraSelect.replaceChildren(...cameras.map((camera, index) =>
+            new Option(camera.label || `Caméra ${index + 1}`, camera.id)
+        ));
+        const preferredCamera = cameras.find((camera) => /back|rear|environment|arrière|dos/i.test(camera.label));
+        lotQrCameraSelect.value = (preferredCamera || cameras[0]).id;
+        await startLotQrCamera(lotQrCameraSelect.value);
+    } catch (error) {
+        showStatus(lotQrStatus, `Impossible de charger les caméras : ${error.message}`, 'error');
+        lotQrCameraSelect.replaceChildren(new Option('Aucune caméra disponible', ''));
+        lotQrCameraSelect.disabled = true;
+    }
+});
+
+async function startLotQrCamera(cameraId) {
+    if (!lotQrScanner || !cameraId) return;
+    lotQrCameraSelect.disabled = true;
+    showStatus(lotQrStatus, 'Démarrage de la caméra...', 'info');
+    const startup = (async () => {
+        if (lotQrScanner.isScanning) await lotQrScanner.stop();
+        await lotQrScanner.start(
+            { deviceId: { exact: cameraId } },
+            { fps: 10, qrbox: { width: 230, height: 230 } },
+            async (decodedText) => {
+                if (lotQrResultHandled) return;
+                lotQrResultHandled = true;
+                const gs1 = window.Gs1.parse(decodedText);
+                if (window.Gs1.isGs1(gs1)) {
+                    applyGs1(decodedText);
+                    showStatus(saveStatus, 'Code GS1 lu : champs renseignés depuis le QR Code.', 'success');
+                } else {
+                    $('numeroLot').value = decodedText;
+                    showStatus(saveStatus, 'Numéro de lot lu depuis le QR Code.', 'success');
+                }
+                await closeLotQrScanner();
+            },
+            () => {}
+        );
+        showStatus(lotQrStatus, 'Placez le QR Code du lot dans le cadre.', 'info');
+    })();
+    lotQrStartup = startup;
+    try {
+        await startup;
+    } catch (error) {
+        showStatus(lotQrStatus, `Impossible de démarrer la caméra : ${error.message}`, 'error');
+    } finally {
+        if (lotQrStartup === startup) lotQrStartup = null;
+        lotQrCameraSelect.disabled = !lotQrDialog.open;
+    }
+}
+
+lotQrCameraSelect.addEventListener('change', () => {
+    startLotQrCamera(lotQrCameraSelect.value);
+});
+
+closeLotQrButton.addEventListener('click', closeLotQrScanner);
+lotQrDialog.addEventListener('cancel', (event) => {
+    event.preventDefault();
+    closeLotQrScanner();
+});
+
+ocrImageInput.addEventListener('change', function () {
+    selectedImage = this.files && this.files[0] ? this.files[0] : null;
+    hideStatus(ocrStatus);
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    if (!selectedImage) {
+        imagePreview.style.display = 'none';
+        imagePreview.removeAttribute('src');
+        return;
+    }
+    previewUrl = URL.createObjectURL(selectedImage);
+    imagePreview.src = previewUrl;
+    imagePreview.style.display = 'block';
+});
+
+ocrButton.addEventListener('click', async () => {
+    if (!selectedImage) {
+        showStatus(ocrStatus, 'Sélectionnez ou prenez une photo.', 'error');
+        return;
+    }
+    if (typeof Tesseract === 'undefined') {
+        showStatus(ocrStatus, "La bibliothèque OCR n'a pas pu être chargée.", 'error');
+        return;
+    }
+
+    ocrButton.disabled = true;
+    try {
+        showStatus(ocrStatus, 'Initialisation de la reconnaissance...', 'info');
+        if (!ocrWorker) {
+            ocrWorker = await Tesseract.createWorker('fra+eng', 1, {
+                logger: (message) => {
+                    if (message.status === 'recognizing text') {
+                        const percentage = Math.round((message.progress || 0) * 100);
+                        showStatus(ocrStatus, `Reconnaissance OCR : ${percentage} %`, 'info');
+                    }
+                }
+            });
+        }
+        const result = await ocrWorker.recognize(selectedImage);
+        ocrText.value = result.data.text.trim();
+        showStatus(ocrStatus, 'OCR terminé. Vérifiez et corrigez le texte si nécessaire.', 'success');
+    } catch (error) {
+        console.error(error);
+        showStatus(ocrStatus, `Erreur OCR : ${error.message}`, 'error');
+    } finally {
+        ocrButton.disabled = false;
+    }
+});
+
+function readImageAsBase64(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+            if (typeof reader.result !== 'string') {
+                reject(new Error("Impossible de lire l'image sélectionnée."));
+                return;
+            }
+            resolve(reader.result.slice(reader.result.indexOf(',') + 1));
+        };
+        reader.onerror = () => reject(reader.error || new Error("Impossible de lire l'image sélectionnée."));
+        reader.readAsDataURL(file);
+    });
+}
+
+saveButton.addEventListener('click', async () => {
+    const expiration = $('datePeremption').value;
+    const comment = $('commentaire').value.trim();
+    const payload = {
+        qr_code: qrCodeInput.value.trim() || null,
+        ocr_text: ocrText.value.trim() || null,
+        nom: $('nom').value.trim() || null,
+        reference: $('reference').value.trim() || null,
+        numero_serie: $('numeroSerie').value.trim() || null,
+        numero_lot: $('numeroLot').value.trim() || null,
+        commentaire: (expiration && !comment.includes(expiration)
+            ? [comment, `Péremption : ${expiration}`].filter(Boolean).join('\n')
+            : comment) || null
+    };
+
+    if (selectedImage) {
+        if (selectedImage.size > 10 * 1024 * 1024) {
+            showStatus(saveStatus, "L'image dépasse la limite de 10 Mo.", 'error');
+            return;
+        }
+        if (!['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/bmp'].includes(selectedImage.type)) {
+            showStatus(saveStatus, "Format d'image non pris en charge. Utilisez PNG, JPEG, GIF, WebP ou BMP.", 'error');
+            return;
+        }
+    }
+
+    if (!payload.qr_code && !payload.ocr_text && !selectedImage) {
+        showStatus(saveStatus, 'Sélectionnez une image, scannez un QR Code ou effectuez un OCR avant l’enregistrement.', 'error');
+        return;
+    }
+
+    saveButton.disabled = true;
+    hideStatus(saveStatus);
+    try {
+        if (selectedImage) {
+            payload.image_base64 = await readImageAsBase64(selectedImage);
+            payload.image_content_type = selectedImage.type;
+        }
+        const response = await fetch(`${API_URL}/api/scans`, {
+            method: 'POST',
+            headers: window.AppAuth.headers({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify(payload)
+        });
+        const result = await response.json();
+        if (response.status === 401) expireSession();
+        if (!response.ok) throw new Error(result.detail || `HTTP ${response.status}`);
+        showStatus(saveStatus, `Enregistrement ${result.id} sauvegardé.`, 'success');
+        await loadScans();
+    } catch (error) {
+        console.error(error);
+        showStatus(saveStatus, `Échec de l'enregistrement : ${error.message}`, 'error');
+    } finally {
+        saveButton.disabled = false;
+    }
+});
+
+refreshButton.addEventListener('click', loadScans);
+
+async function deleteScan(id) {
+    if (!currentUser || !['admin', 'superadmin'].includes(currentUser.role)) return;
+    if (!window.confirm(`Supprimer l'enregistrement ${id} ?`)) return;
+    try {
+        const response = await fetch(`${API_URL}/api/scans/${id}`, {
+            method: 'DELETE',
+            headers: window.AppAuth.headers()
+        });
+        if (response.status === 401) expireSession();
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        await loadScans();
+    } catch (error) {
+        showStatus(appStatus, `Suppression impossible : ${error.message}`, 'error');
+    }
+}
+
+async function loadScans() {
+    if (!currentUser) {
+        scanList.textContent = 'Connectez-vous pour consulter les enregistrements.';
+        return;
+    }
+    scanList.textContent = 'Chargement...';
+    try {
+        const response = await fetch(`${API_URL}/api/scans`, {
+            headers: window.AppAuth.headers()
+        });
+        if (response.status === 401) expireSession();
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const scans = await response.json();
+        imageObjectUrls.forEach((url) => URL.revokeObjectURL(url));
+        imageObjectUrls = [];
+        scanList.replaceChildren();
+        if (!scans.length) {
+            scanList.textContent = 'Aucun enregistrement.';
+            return;
+        }
+        scans.forEach((scan) => {
+            const item = document.createElement('article');
+            item.className = 'scan-item';
+            const row = document.createElement('div');
+            row.className = 'scan-row';
+            const content = document.createElement('div');
+            const title = document.createElement('strong');
+            title.textContent = scan.nom || scan.reference || scan.qr_code || `Scan ${scan.id}`;
+            const details = document.createElement('div');
+            details.className = 'value';
+            details.textContent = [
+                scan.qr_code ? `QR : ${scan.qr_code}` : 'Enregistrement OCR',
+                scan.numero_lot ? `Lot : ${scan.numero_lot}` : null
+            ].filter(Boolean).join(' · ');
+            if (scan.image_content_type) loadSavedImage(scan.id, content);
+            const date = document.createElement('div');
+            date.className = 'scan-date';
+            date.textContent = new Date(scan.created_at).toLocaleString('fr-BE');
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'danger';
+            button.textContent = 'Supprimer';
+            button.addEventListener('click', () => deleteScan(scan.id));
+            content.append(title, details, date);
+            row.append(content, button);
+            button.hidden = !['admin', 'superadmin'].includes(currentUser.role);
+            item.append(row);
+            scanList.append(item);
+        });
+    } catch (error) {
+        console.error(error);
+        scanList.textContent = `Impossible de charger les données depuis ${API_URL}.`;
+    }
+}
+
+function renderStockOptions() {
+    const selectedId = stockProductSelect.value;
+    const query = stockProductSearch.value.trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    const matches = stockItems.filter((item) =>
+        [item.denomination, item.code_barres, item.numero_lot, item.numero_serie]
+            .join(' ').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().includes(query)
+    );
+    stockProductSelect.replaceChildren(new Option(
+        matches.length ? 'Sélectionnez un produit' : 'Aucun produit correspondant',
+        ''
+    ));
+    matches.forEach((item) => {
+        const details = [
+            `${item.quantity} disponible(s)`,
+            item.code_barres ? `code ${item.code_barres}` : null,
+            item.numero_lot ? `lot ${item.numero_lot}` : null,
+            item.numero_serie ? `série ${item.numero_serie}` : null
+        ].filter(Boolean).join(' · ');
+        const option = new Option(`${item.denomination} — ${details}`, String(item.id));
+        option.disabled = item.quantity <= 0;
+        stockProductSelect.add(option);
+    });
+    if (matches.some((item) => String(item.id) === selectedId)) {
+        stockProductSelect.value = selectedId;
+    }
+    updateStockAvailability();
+}
+
+function updateStockAvailability() {
+    const item = stockItems.find((entry) => String(entry.id) === stockProductSelect.value);
+    $('stockAvailability').textContent = item
+        ? `Quantité disponible : ${item.quantity}`
+        : 'Sélectionnez un produit pour voir la quantité disponible.';
+    const requested = Number(stockWithdrawalQuantity.value);
+    withdrawStockButton.disabled = !item
+        || !Number.isInteger(requested)
+        || requested < 1
+        || requested > item.quantity;
+}
+
+async function loadStockItems() {
+    if (!currentUser) return;
+    $('refreshStockButton').disabled = true;
+    try {
+        const response = await fetch(`${API_URL}/api/stock`, {
+            headers: window.AppAuth.headers()
+        });
+        if (response.status === 401) {
+            expireSession();
+            throw new Error('Session expirée. Connectez-vous à nouveau.');
+        }
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        stockItems = await response.json();
+        renderStockOptions();
+        hideStatus($('stockWithdrawalStatus'));
+    } catch (error) {
+        showStatus($('stockWithdrawalStatus'), `Impossible de charger le stock : ${error.message}`, 'error');
+    } finally {
+        $('refreshStockButton').disabled = !currentUser;
+    }
+}
+
+async function withdrawStockItem() {
+    const item = stockItems.find((entry) => String(entry.id) === stockProductSelect.value);
+    const quantity = Number(stockWithdrawalQuantity.value);
+    if (!item || !Number.isInteger(quantity) || quantity < 1 || quantity > item.quantity) {
+        updateStockAvailability();
+        return;
+    }
+    withdrawStockButton.disabled = true;
+    try {
+        const response = await fetch(`${API_URL}/api/stock/${item.id}/withdraw`, {
+            method: 'POST',
+            headers: window.AppAuth.headers({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ quantity })
+        });
+        const result = await response.json();
+        if (response.status === 401) {
+            expireSession();
+            throw new Error('Session expirée. Connectez-vous à nouveau.');
+        }
+        if (!response.ok) throw new Error(result.detail || `HTTP ${response.status}`);
+        stockWithdrawalQuantity.value = '1';
+        showStatus(
+            $('stockWithdrawalStatus'),
+            `${quantity} unité(s) retirée(s) de « ${item.denomination} ».`,
+            'success'
+        );
+        await loadStockItems();
+        const remainingQuantity = stockItems.find((stockItem) => stockItem.id === item.id)?.quantity;
+        showStatus(
+            $('stockWithdrawalStatus'),
+            `${quantity} unité(s) retirée(s) de « ${item.denomination} ». Nouveau stock : ${remainingQuantity ?? 0}.`,
+            'success'
+        );
+    } catch (error) {
+        await loadStockItems();
+        showStatus($('stockWithdrawalStatus'), `Sortie impossible : ${error.message}`, 'error');
+    } finally {
+        updateStockAvailability();
+    }
+}
+
+async function loadSavedImage(scanId, parent) {
+    try {
+        const response = await fetch(`${API_URL}/api/scans/${scanId}/image`, {
+            headers: window.AppAuth.headers()
+        });
+        if (response.status === 401) {
+            expireSession();
+            return;
+        }
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const url = URL.createObjectURL(await response.blob());
+        imageObjectUrls.push(url);
+        const image = document.createElement('img');
+        image.className = 'saved-image';
+        image.src = url;
+        image.alt = 'Image enregistrée';
+        image.loading = 'lazy';
+        parent.append(image);
+    } catch (error) {
+        console.error(`Impossible de charger l'image du scan ${scanId}.`, error);
+    }
+}
+
+window.addEventListener('beforeunload', async () => {
+    if (ocrWorker) await ocrWorker.terminate();
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    imageObjectUrls.forEach((url) => URL.revokeObjectURL(url));
+});
+
+updateAuthState();
+initQrScanner();
+checkApi();
+loadScans();
+loadStockItems();
+</script>
+</body>
+</html>

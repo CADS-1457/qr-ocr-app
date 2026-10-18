@@ -1,0 +1,39 @@
+# Environnement Python
+venv/
+.venv/
+**/venv/
+**/.venv/
+
+# Python
+__pycache__/
+**/__pycache__/
+*.py[cod]
+
+# Variables sensibles
+.env
+.env.*
+!.env.example
+
+# Base SQLite locale
+*.db
+*.sqlite
+*.sqlite3
+
+# Uploads
+uploads/
+backend/uploads/
+
+# IDE
+.vscode/
+.idea/
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# macOS
+.DS_Store
+
+# Cache OCR
+.cache/
+.paddlex/

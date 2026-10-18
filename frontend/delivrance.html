@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#0f4c81">
+  <title>Délivrance d’un produit à un patient</title>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <style>
+    :root{--primary:#0f4c81;--primary-dark:#0a365c;--bg:#eef2f7;--text:#1f2937;--muted:#64748b;--border:#dbe3ec}
+    *{box-sizing:border-box}body{margin:0;padding:16px;background:var(--bg);color:var(--text);font-family:Arial,sans-serif}
+    .container{max-width:1200px;margin:auto}.card{margin-bottom:16px;padding:20px;background:#fff;border-radius:16px;box-shadow:0 6px 22px rgba(15,76,129,.08)}
+    h1{margin:0 0 6px;color:var(--primary);font-size:28px}h2{margin:0 0 12px}.muted{color:var(--muted)}
+    .header,.actions,.auth-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.header,.auth-bar{justify-content:space-between}
+    .btn{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:10px 14px;border:0;border-radius:10px;background:var(--primary);color:#fff;font-weight:700;text-decoration:none;cursor:pointer}
+    .btn:hover{background:var(--primary-dark)}.btn.secondary{background:#475569}.btn.light{background:#fff;color:var(--text);border:1px solid var(--border)}.btn:disabled{opacity:.55;cursor:not-allowed}
+    .field{min-width:0}.field label{display:block;margin:14px 0 6px;font-size:14px;font-weight:700}
+    .field input,.field select{width:100%;min-height:44px;padding:10px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;font:inherit}
+    .patient-search-results{display:grid;gap:4px;max-height:220px;overflow:auto;margin-top:6px;padding:4px;border:1px solid var(--border);border-radius:10px;background:#fff}
+    .patient-search-result{width:100%;padding:10px;border:0;border-radius:7px;background:#fff;color:var(--text);font:inherit;text-align:left;cursor:pointer}
+    .patient-search-result:hover,.patient-search-result[aria-selected="true"]{background:#dbeafe;color:var(--primary)}
+    .patient-search-empty{margin:0;padding:8px;color:var(--muted);font-size:14px}
+    .login-grid{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end;margin-top:16px}.login-grid label{margin-top:0}
+    .status{display:none;margin-top:14px;padding:12px;border-radius:10px;line-height:1.4}.status.info{display:block;background:#dbeafe;color:#1e40af}.status.success{display:block;background:#dcfce7;color:#166534}.status.error{display:block;background:#fee2e2;color:#991b1b}
+    .result{padding:16px;border:1px solid var(--border);border-radius:12px;background:#f8fafc}.result strong{display:block;font-size:19px}.quantity{margin-top:8px;color:var(--primary);font-size:22px;font-weight:700}
+    #productReader{width:100%;overflow:hidden;border:1px solid var(--border);border-radius:12px}#productReader video{border-radius:10px}
+    .file-picker{display:block;width:100%;min-height:44px;margin-top:10px;padding:10px;border:1px solid #cbd5e1;border-radius:10px;background:#fff}
+    [hidden]{display:none!important}
+    @media(max-width:600px){body{padding:10px}.card{padding:15px}.header{align-items:stretch}.header .btn{width:100%}.login-grid{grid-template-columns:1fr}.login-grid .btn{width:100%}}
+  </style>
+  <link rel="stylesheet" href="app-shell.css">
+  <script src="app-navigation.js" defer></script>
+</head>
+<body>
+<main class="container">
+  <section class="card">
+    <div class="header">
+      <div><h1>Délivrance au patient</h1><div class="muted">Scannez le produit, sélectionnez un patient ou créez sa fiche, puis validez la sortie de stock.</div></div>
+    </div>
+    <div id="authBar" class="auth-bar" hidden>
+      <strong id="signedInAs"></strong>
+      <button id="logoutButton" class="btn light" type="button">Déconnexion</button>
+    </div>
+    <form id="loginForm" class="login-grid">
+      <div class="field"><label for="loginUsername">Utilisateur</label><input id="loginUsername" autocomplete="username" required></div>
+      <div class="field"><label for="loginPassword">Mot de passe</label><input id="loginPassword" type="password" autocomplete="current-password" required></div>
+      <button id="loginButton" class="btn" type="submit">Connexion</button>
+    </form>
+    <div id="authStatus" class="status" aria-live="polite"></div>
+  </section>
+
+  <section id="scanCard" class="card" hidden>
+    <h2>1. Scanner le produit</h2>
+    <p class="muted">Le code doit être enregistré sur la fiche du produit ou être un QR de sous-entité du stock. Vous pouvez aussi saisir le code ou le lire depuis une image.</p>
+    <div class="field"><label for="cameraSelect">Caméra</label><select id="cameraSelect"><option value="">Recherche des caméras...</option></select></div>
+    <div class="actions" style="margin:12px 0"><button id="startScan" class="btn" type="button">Démarrer le scanner</button></div>
+    <div id="productReader"></div>
+    <div class="field"><label for="scannedCode">Code produit</label><input id="scannedCode" type="text" maxlength="2000" autocomplete="off" placeholder="Scannez ou saisissez le code-barres / QR"></div>
+    <div class="actions" style="margin-top:10px"><button id="resolveCode" class="btn secondary" type="button">Rechercher le produit</button></div>
+    <label for="codeImage" class="field" style="display:block;margin-top:14px;font-weight:700">Ou lire un code depuis une image</label>
+    <input id="codeImage" class="file-picker" type="file" accept="image/*">
+    <button id="readImage" class="btn secondary" type="button">Lire le code de l’image</button>
+    <div id="scanStatus" class="status" aria-live="polite"></div>
+  </section>
+
+  <section id="productCard" class="card" hidden>
+    <h2>2. Produit sélectionné</h2>
+    <div class="result">
+      <strong id="productName"></strong>
+      <div id="productCode" class="muted"></div>
+      <div id="productSerial" class="muted"></div>
+      <div id="productExpiration" class="muted"></div>
+      <div id="productQuantity" class="quantity"></div>
+    </div>
+    <div class="field"><label for="dispenseQuantity">Quantité à délivrer</label><input id="dispenseQuantity" type="number" min="1" step="1" value="1"></div>
+  </section>
+
+  <section id="patientCard" class="card" hidden>
+    <h2>3. Patient</h2>
+    <div class="field">
+      <label for="patientMode">Fiche patient</label>
+      <select id="patientMode">
+        <option value="existing">Patient existant</option>
+        <option value="new">Nouveau patient</option>
+      </select>
+    </div>
+    <div id="existingPatientFields">
+      <div class="field"><label for="patientSearch">Rechercher un patient</label><input id="patientSearch" type="search" placeholder="Nom ou prénom" autocomplete="off"><div id="patientSearchResults" class="patient-search-results" role="listbox" aria-label="Résultats de recherche patient" hidden></div></div>
+      <div class="field"><label for="patientSelect">Patient</label><select id="patientSelect"><option value="">Chargement des patients...</option></select></div>
+    </div>
+    <div id="newPatientFields" hidden>
+      <div class="field"><label for="patientFirstName">Prénom</label><input id="patientFirstName" type="text" maxlength="255" autocomplete="given-name"></div>
+      <div class="field"><label for="patientLastName">Nom</label><input id="patientLastName" type="text" maxlength="255" autocomplete="family-name"></div>
+      <div class="field"><label for="patientBirthDate">Date de naissance</label><input id="patientBirthDate" type="date"></div>
+    </div>
+    <h2 style="margin-top:20px">4. Informations de l’acte</h2>
+    <div class="field"><label for="doctorName">Médecin ayant pratiqué l’acte</label><input id="doctorName" type="text" maxlength="255" autocomplete="name"></div>
+    <div class="field"><label for="procedureRoom">Salle</label><input id="procedureRoom" type="text" maxlength="255" placeholder="Ex. Salle 2"></div>
+    <button id="dispenseButton" class="btn" type="button" disabled>Confirmer la délivrance et déduire du stock</button>
+    <div id="dispenseStatus" class="status" aria-live="polite"></div>
+  </section>
+</main>
+<script src="auth.js"></script>
+<script src="gs1.js"></script>
+<script>
+'use strict';
+
+const API = `${window.AppAuth.API_BASE}/api`;
+const $ = (id) => document.getElementById(id);
+const requestedPatientParam = new URLSearchParams(window.location.search).get('patient_id');
+const parsedPatientId = requestedPatientParam && /^\d+$/.test(requestedPatientParam)
+  ? Number(requestedPatientParam)
+  : null;
+const requestedPatientId = Number.isSafeInteger(parsedPatientId) && parsedPatientId > 0
+  ? parsedPatientId
+  : null;
+let currentUser = window.AppAuth.user();
+let scanner = null;
+let cameraRunning = false;
+let cameraScanArmed = false;
+let processing = false;
+let patients = [];
+let resolvedProduct = null;
+
+function showStatus(element, message, type='info') {
+  element.textContent = message;
+  element.className = `status ${type}`;
+}
+
+function normalize(value) {
+  return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+}
+
+function dateValue(value) {
+  return new Date(`${value}T00:00:00`).toLocaleDateString('fr-BE');
+}
+
+function updateAuthState() {
+  const signedIn = Boolean(currentUser);
+  $('loginForm').hidden = signedIn;
+  $('authBar').hidden = !signedIn;
+  $('scanCard').hidden = !signedIn;
+  $('patientCard').hidden = !signedIn || !resolvedProduct;
+  $('productCard').hidden = !signedIn || !resolvedProduct;
+  $('signedInAs').textContent = signedIn
+    ? `Connecté : ${currentUser.username} (${
+      currentUser.role === 'superadmin' ? 'SuperAdmin'
+        : currentUser.role === 'admin' ? 'administrateur' : 'utilisateur'
+    })`
+    : '';
+  updateDispenseControls();
+}
+
+function renderPatientOptions(preferredPatientId = null) {
+  const previousId = preferredPatientId === null
+    ? $('patientSelect').value
+    : String(preferredPatientId);
+  const query = normalize($('patientSearch').value.trim());
+  const filtered = patients.filter((patient) =>
+    normalize(`${patient.prenom} ${patient.nom}`).includes(query)
+  );
+  renderPatientSearchResults(filtered, query);
+  const selectedPatient = filtered.find((patient) => String(patient.id) === previousId);
+  $('patientSelect').replaceChildren(new Option(
+    filtered.length ? 'Sélectionnez un patient...' : 'Aucun patient correspondant',
+    ''
+  ));
+  for (const patient of filtered) {
+    $('patientSelect').add(new Option(
+      `${patient.prenom} ${patient.nom} — né(e) le ${dateValue(patient.date_naissance)}`,
+      String(patient.id)
+    ));
+  }
+  if (selectedPatient) $('patientSelect').value = String(selectedPatient.id);
+  updateDispenseControls();
+}
+
+function renderPatientSearchResults(matches, query) {
+  const results = $('patientSearchResults');
+  results.replaceChildren();
+  results.hidden = !query;
+  if (!query) return;
+  if (!matches.length) {
+    const empty = document.createElement('p');
+    empty.className = 'patient-search-empty';
+    empty.textContent = 'Aucun patient correspondant.';
+    results.append(empty);
+    return;
+  }
+  matches.forEach((patient) => {
+    const option = document.createElement('button');
+    option.className = 'patient-search-result';
+    option.type = 'button';
+    option.role = 'option';
+    option.setAttribute('aria-selected', String($('patientSelect').value === String(patient.id)));
+    option.textContent = `${patient.prenom} ${patient.nom} — né(e) le ${dateValue(patient.date_naissance)}`;
+    option.addEventListener('click', () => {
+      $('patientSelect').value = String(patient.id);
+      results.hidden = true;
+      updateDispenseControls();
+    });
+    results.append(option);
+  });
+}
+
+function updatePatientMode() {
+  const existing = $('patientMode').value === 'existing';
+  $('existingPatientFields').hidden = !existing;
+  $('newPatientFields').hidden = existing;
+  updateDispenseControls();
+}
+
+function updateDispenseControls() {
+  const quantity = Number($('dispenseQuantity').value);
+  const validQuantity = resolvedProduct
+    && Number.isInteger(quantity)
+    && quantity > 0
+    && quantity <= resolvedProduct.quantity;
+  const patientReady = $('patientMode').value === 'existing'
+    ? Boolean($('patientSelect').value)
+    : Boolean(
+      $('patientFirstName').value.trim()
+      && $('patientLastName').value.trim()
+      && $('patientBirthDate').value
+    );
+  $('dispenseButton').disabled = !currentUser
+    || processing
+    || !resolvedProduct
+    || !validQuantity
+    || !patientReady;
+}
+
+function renderProduct() {
+  $('productName').textContent = resolvedProduct.denomination;
+  $('productCode').textContent = `Code scanné : ${resolvedProduct.scanned_code}`;
+  $('productSerial').textContent = resolvedProduct.numero_serie
+    ? `Numéro de série : ${resolvedProduct.numero_serie}`
+    : '';
+  $('productExpiration').textContent = [
+    resolvedProduct.numero_lot ? `Lot : ${resolvedProduct.numero_lot}` : '',
+    resolvedProduct.expiration_date ? `Péremption : ${resolvedProduct.expiration_date}` : ''
+  ].filter(Boolean).join(' — ');
+  $('productQuantity').textContent = `Stock disponible : ${resolvedProduct.quantity}`;
+  $('dispenseQuantity').max = String(resolvedProduct.quantity);
+  $('dispenseQuantity').value = '1';
+  $('productCard').hidden = false;
+  $('patientCard').hidden = false;
+  updateDispenseControls();
+}
+
+async function stopCamera() {
+  if (scanner && cameraRunning) {
+    await scanner.stop();
+    cameraRunning = false;
+  }
+}
+
+async function loadCameras() {
+  if (typeof Html5Qrcode === 'undefined') {
+    showStatus($('scanStatus'), 'La bibliothèque de lecture QR/code-barres n’a pas pu être chargée.', 'error');
+    return;
+  }
+  try {
+    const cameras = await Html5Qrcode.getCameras();
+    $('cameraSelect').replaceChildren(...cameras.map((camera, index) =>
+      new Option(camera.label || `Caméra ${index + 1}`, camera.id)
+    ));
+    if (!cameras.length) {
+      $('cameraSelect').add(new Option('Aucune caméra disponible', ''));
+      $('startScan').disabled = true;
+      return;
+    }
+    const preferred = cameras.find((camera) => /back|rear|environment|arrière|dos/i.test(camera.label));
+    $('cameraSelect').value = (preferred || cameras[0]).id;
+  } catch (error) {
+    $('cameraSelect').replaceChildren(new Option('Caméras indisponibles', ''));
+    showStatus($('scanStatus'), `Impossible de rechercher les caméras : ${error.message}`, 'error');
+  }
+}
+
+function scannerFormats() {
+  return window.Gs1.scannerFormats();
+}
+
+async function startCamera() {
+  if (!currentUser || processing || typeof Html5Qrcode === 'undefined') return;
+  const cameraId = $('cameraSelect').value;
+  if (!cameraId) {
+    showStatus($('scanStatus'), 'Sélectionnez une caméra disponible.', 'error');
+    return;
+  }
+  try {
+    await stopCamera();
+    if (!scanner) {
+      scanner = new Html5Qrcode('productReader', { formatsToSupport: scannerFormats() });
+    }
+    $('startScan').disabled = true;
+    showStatus($('scanStatus'), 'Démarrage de la caméra...', 'info');
+    await scanner.start(
+      { deviceId: { exact: cameraId } },
+      {
+        fps: 10,
+        qrbox: (width, height) => ({
+          width: Math.min(width, 500),
+          height: Math.min(Math.round(width * 0.38), height, 220)
+        })
+      },
+      handleProductRead,
+      () => {}
+    );
+    cameraRunning = true;
+    cameraScanArmed = true;
+    showStatus($('scanStatus'), 'Scanner actif. Présentez le code du produit.', 'info');
+  } catch (error) {
+    showStatus($('scanStatus'), `Impossible de démarrer la caméra : ${error.message}`, 'error');
+  } finally {
+    $('startScan').disabled = !currentUser;
+  }
+}
+
+async function handleProductRead(decodedText) {
+  if (!cameraScanArmed || processing) return;
+  cameraScanArmed = false;
+  $('scannedCode').value = decodedText;
+  try {
+    await stopCamera();
+  } catch (error) {
+    showStatus($('scanStatus'), `Impossible d’arrêter la caméra : ${error.message}`, 'error');
+    return;
+  }
+  await resolveProduct(decodedText);
+}
+
+async function resolveProduct(code = $('scannedCode').value) {
+  const normalizedCode = code.trim();
+  if (!normalizedCode || processing) {
+    if (!normalizedCode) showStatus($('scanStatus'), 'Scannez ou saisissez le code du produit.', 'error');
+    return;
+  }
+  processing = true;
+  updateDispenseControls();
+  $('resolveCode').disabled = true;
+  $('readImage').disabled = true;
+  try {
+    const gs1 = window.Gs1.parse(normalizedCode);
+    const candidates = [...new Set([gs1.serial, gs1.gtin, normalizedCode].filter(Boolean))];
+    let result = null;
+    let lastError = null;
+    for (const candidate of candidates) {
+      const response = await fetch(`${API}/stock/resolve-scan`, {
+        method: 'POST',
+        headers: window.AppAuth.headers({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ code: candidate })
+      });
+      const body = await response.json();
+      if (response.status === 401) {
+        logout();
+        throw new Error('Session expirée. Connectez-vous à nouveau.');
+      }
+      if (response.ok) {
+        result = body;
+        break;
+      }
+      lastError = new Error(body.detail || `HTTP ${response.status}`);
+      if (response.status !== 404) break;
+    }
+    if (!result) throw lastError;
+    resolvedProduct = {
+      ...result,
+      scanned_code: normalizedCode
+    };
+    renderProduct();
+    showStatus(
+      $('scanStatus'),
+      result.quantity > 0
+        ? `Produit identifié : ${result.denomination}. Choisissez le patient et la quantité.`
+        : `Produit identifié, mais aucune unité n’est disponible. Actualisez le stock avant toute délivrance.`,
+      result.quantity > 0 ? 'success' : 'error'
+    );
+  } catch (error) {
+    resolvedProduct = null;
+    if ($('scannedCode').value.trim() === normalizedCode) $('scannedCode').value = '';
+    $('productCard').hidden = true;
+    $('patientCard').hidden = true;
+    updateDispenseControls();
+    showStatus($('scanStatus'), `Produit introuvable : ${error.message}`, 'error');
+  } finally {
+    processing = false;
+    $('resolveCode').disabled = false;
+    $('readImage').disabled = false;
+    updateDispenseControls();
+  }
+}
+
+async function readCodeImage() {
+  const file = $('codeImage').files[0];
+  if (!file) {
+    showStatus($('scanStatus'), 'Choisissez une image contenant un QR Code ou un code-barres.', 'error');
+    return;
+  }
+  if (processing) return;
+  processing = true;
+  $('readImage').disabled = true;
+  try {
+    cameraScanArmed = false;
+    await stopCamera();
+    if (typeof Html5Qrcode === 'undefined') {
+      throw new Error('La bibliothèque de lecture QR/code-barres n’est pas disponible.');
+    }
+    if (!scanner || typeof scanner.scanFile !== 'function') {
+      scanner = new Html5Qrcode('productReader', { formatsToSupport: scannerFormats() });
+    }
+    if (typeof scanner.scanFile !== 'function') {
+      throw new Error('La lecture des images n’est pas disponible. Rechargez la page puis réessayez.');
+    }
+    showStatus($('scanStatus'), 'Lecture du code de l’image...', 'info');
+    const decodedText = await scanner.scanFile(file, true);
+    $('scannedCode').value = decodedText;
+    processing = false;
+    await resolveProduct(decodedText);
+  } catch (error) {
+    showStatus($('scanStatus'), `Lecture impossible : ${error.message}`, 'error');
+  } finally {
+    processing = false;
+    $('readImage').disabled = false;
+    updateDispenseControls();
+  }
+}
+
+async function loadPatients(preferredPatientId = requestedPatientId) {
+  const response = await fetch(`${API}/patients`, { headers: window.AppAuth.headers() });
+  if (response.status === 401) {
+    logout();
+    throw new Error('Session expirée. Connectez-vous à nouveau.');
+  }
+  if (!response.ok) throw new Error(`Impossible de charger les patients : HTTP ${response.status}`);
+  patients = await response.json();
+  renderPatientOptions(preferredPatientId);
+  if (preferredPatientId) {
+    const requestedPatient = patients.find((patient) => patient.id === preferredPatientId);
+    if (requestedPatient) {
+      $('patientSelect').value = String(requestedPatient.id);
+      showStatus($('authStatus'), `Patient sélectionné : ${requestedPatient.prenom} ${requestedPatient.nom}.`, 'success');
+    } else {
+      $('patientSelect').value = '';
+      showStatus($('authStatus'), 'Le patient demandé est introuvable. Recherchez et sélectionnez un patient existant.', 'error');
+    }
+    updateDispenseControls();
+  }
+}
+
+async function dispenseProduct() {
+  if (!resolvedProduct || processing) return;
+  const quantity = Number($('dispenseQuantity').value);
+  if (!Number.isInteger(quantity) || quantity < 1 || quantity > resolvedProduct.quantity) {
+    showStatus($('dispenseStatus'), 'La quantité doit être entière et ne peut pas dépasser le stock disponible.', 'error');
+    return;
+  }
+  const payload = {
+    quantity,
+    medecin: $('doctorName').value.trim(),
+    salle: $('procedureRoom').value.trim(),
+    scanned_code: resolvedProduct.scanned_code,
+    qr_unit_id: resolvedProduct.qr_unit_id
+  };
+  if ($('patientMode').value === 'existing') {
+    payload.patient_id = Number($('patientSelect').value);
+  } else {
+    payload.prenom = $('patientFirstName').value.trim();
+    payload.nom = $('patientLastName').value.trim();
+    payload.date_naissance = $('patientBirthDate').value;
+  }
+  processing = true;
+  $('dispenseButton').disabled = true;
+  try {
+    const response = await fetch(`${API}/stock/${resolvedProduct.stock_item_id}/dispense`, {
+      method: 'POST',
+      headers: window.AppAuth.headers({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(payload)
+    });
+    const result = await response.json();
+    if (response.status === 401) {
+      logout();
+      throw new Error('Session expirée. Connectez-vous à nouveau.');
+    }
+    if (!response.ok) throw new Error(result.detail || `HTTP ${response.status}`);
+    resolvedProduct.quantity = result.stock_remaining;
+    renderProduct();
+    showStatus(
+      $('dispenseStatus'),
+      `${result.quantity} unité(s) de « ${result.denomination} » délivrée(s) à ${result.patient_name} (${dateValue(result.patient_date_naissance)}). Stock restant : ${result.stock_remaining}.`,
+      'success'
+    );
+    if (result.patient_id && $('patientMode').value === 'new') {
+      $('patientMode').value = 'existing';
+      $('patientSearch').value = '';
+      updatePatientMode();
+      try {
+        await loadPatients(result.patient_id);
+        $('patientSelect').value = String(result.patient_id);
+        updateDispenseControls();
+      } catch (error) {
+        showStatus(
+          $('dispenseStatus'),
+          `Délivrance enregistrée pour ${result.patient_name}, mais la liste des patients n’a pas pu être actualisée : ${error.message}`,
+          'info'
+        );
+        return;
+      }
+    }
+    if (result.stock_remaining === 0) {
+      showStatus($('scanStatus'), 'Produit épuisé. Scannez un autre produit pour continuer.', 'info');
+    }
+  } catch (error) {
+    showStatus($('dispenseStatus'), `Délivrance impossible : ${error.message}`, 'error');
+  } finally {
+    processing = false;
+    updateDispenseControls();
+  }
+}
+
+async function login(event) {
+  event.preventDefault();
+  $('loginButton').disabled = true;
+  try {
+    currentUser = await window.AppAuth.login($('loginUsername').value.trim(), $('loginPassword').value);
+    $('loginPassword').value = '';
+    updateAuthState();
+    showStatus($('authStatus'), 'Connexion réussie.', 'success');
+    await Promise.all([loadPatients(), loadCameras()]);
+  } catch (error) {
+    showStatus($('authStatus'), `Connexion impossible : ${error.message}`, 'error');
+  } finally {
+    $('loginButton').disabled = false;
+  }
+}
+
+function logout() {
+  cameraScanArmed = false;
+  stopCamera().catch((error) => {
+    showStatus($('scanStatus'), `Impossible d’arrêter la caméra : ${error.message}`, 'error');
+  });
+  window.AppAuth.logout();
+  currentUser = null;
+  resolvedProduct = null;
+  patients = [];
+  updateAuthState();
+  showStatus($('authStatus'), 'Session fermée.', 'info');
+}
+
+$('loginForm').addEventListener('submit', login);
+$('logoutButton').addEventListener('click', logout);
+$('startScan').addEventListener('click', startCamera);
+$('resolveCode').addEventListener('click', () => resolveProduct());
+$('scannedCode').addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    resolveProduct();
+  }
+});
+$('cameraSelect').addEventListener('change', () => {
+  if (cameraRunning) startCamera();
+});
+$('readImage').addEventListener('click', readCodeImage);
+$('patientMode').addEventListener('change', updatePatientMode);
+$('patientSearch').addEventListener('input', renderPatientOptions);
+$('patientSelect').addEventListener('change', () => {
+  renderPatientOptions();
+  updateDispenseControls();
+});
+['patientFirstName', 'patientLastName', 'patientBirthDate', 'dispenseQuantity', 'doctorName', 'procedureRoom'].forEach((id) => {
+  $(id).addEventListener('input', updateDispenseControls);
+});
+$('dispenseButton').addEventListener('click', dispenseProduct);
+window.addEventListener('beforeunload', () => {
+  if (scanner && cameraRunning) scanner.stop();
+});
+
+async function initialize() {
+  const today = new Date();
+  $('patientBirthDate').max = [
+    today.getFullYear(),
+    String(today.getMonth() + 1).padStart(2, '0'),
+    String(today.getDate()).padStart(2, '0')
+  ].join('-');
+  updateAuthState();
+  if (!currentUser) {
+    showStatus(
+      $('authStatus'),
+      requestedPatientId
+        ? 'Connectez-vous pour continuer avec le patient sélectionné.'
+        : 'Connectez-vous pour délivrer un produit à un patient.',
+      'info'
+    );
+    return;
+  }
+  try {
+    const response = await fetch(`${API}/auth/me`, { headers: window.AppAuth.headers() });
+    if (response.status === 401) {
+      logout();
+      showStatus($('authStatus'), 'Session expirée. Connectez-vous à nouveau.', 'error');
+      return;
+    }
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    currentUser = await response.json();
+    updateAuthState();
+    await Promise.all([loadPatients(), loadCameras()]);
+  } catch (error) {
+    showStatus($('authStatus'), `Impossible d’initialiser la page : ${error.message}`, 'error');
+  }
+}
+
+initialize();
+</script>
+</body>
+</html>

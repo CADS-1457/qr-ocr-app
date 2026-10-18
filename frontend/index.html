@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f4c81">
+  <title>Accueil — QR/OCR</title>
+  <style>
+    :root{color-scheme:light;--primary:#0f4c81;--bg:#eef2f7;--text:#1f2937;--muted:#64748b}
+    *{box-sizing:border-box}
+    body{min-height:100vh;margin:0;padding:24px;background:var(--bg);color:var(--text);font-family:Arial,sans-serif}
+    main{width:100%;max-width:1200px;margin:0 auto}
+    .card{margin-bottom:20px;padding:24px;background:#fff;border-radius:16px;box-shadow:0 6px 22px rgba(15,76,129,.08)}
+    h1{margin:0 0 8px;color:var(--primary);font-size:28px}
+    h2{margin:0 0 8px;font-size:20px}
+    p{line-height:1.5}
+    .intro,.muted{color:var(--muted)}
+    .login-form{display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:end;margin-top:22px}
+    .field{min-width:0}
+    label{display:block;margin-bottom:6px;font-weight:700}
+    input,button{min-height:46px;padding:11px 12px;border-radius:10px;font:inherit}
+    input{width:100%;border:1px solid #cbd5e1;background:#fff}
+    button{border:0;background:var(--primary);color:#fff;font-weight:700;cursor:pointer}
+    button:disabled{opacity:.6;cursor:wait}
+    .account-bar{display:flex;align-items:center;justify-content:space-between;gap:12px}
+    .account-bar strong{overflow-wrap:anywhere}
+    .secondary{padding:8px 12px;background:#475569}
+    .status{margin:14px 0 0;padding:12px;border-radius:10px;line-height:1.4}
+    .status:empty{display:none}
+    .status.info{background:#dbeafe;color:#1e40af}
+    .status.success{background:#dcfce7;color:#166534}
+    .status.error{background:#fee2e2;color:#991b1b}
+    .stock-summary[hidden]{display:none}
+    .summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+    .summary-item{padding:16px;border:1px solid #dbe3ec;border-radius:12px;background:#fff}
+    .summary-item strong{display:block;font-size:28px}
+    .summary-item span{color:var(--muted)}
+    .summary-item.red strong{color:#b91c1c}
+    .summary-item.orange strong{color:#c2410c}
+    .summary-item.green strong{color:#15803d}
+    .stock-alert{margin:14px 0 0;padding:14px;border-radius:10px;font-weight:700;line-height:1.4}
+    .stock-alert[hidden]{display:none}
+    .stock-alert.red{background:#fee2e2;color:#991b1b}
+    .stock-alert.orange{background:#ffedd5;color:#9a3412}
+    .stock-alert.green{background:#dcfce7;color:#166534}
+    .stock-alert-detail{margin-left:8px;padding:0;border:0;background:transparent;color:inherit;font:inherit;font-weight:700;text-decoration:underline;cursor:pointer}
+    .stock-summary-link{display:inline-block;margin-top:12px;color:var(--primary);font-weight:700}
+    .low-stock-dialog{width:min(560px,calc(100% - 32px));max-height:min(80vh,680px);overflow:auto;padding:22px;border:0;border-radius:16px;color:var(--text);box-shadow:0 18px 50px rgba(15,23,42,.25)}
+    .low-stock-dialog::backdrop{background:rgba(15,23,42,.55)}
+    .low-stock-dialog h2{margin:0 0 8px;color:#991b1b}
+    .low-stock-dialog p{color:var(--muted)}
+    .low-stock-list{display:grid;gap:10px;margin:16px 0;padding:0;list-style:none}
+    .low-stock-list li{display:flex;justify-content:space-between;gap:16px;padding:12px;border:1px solid #fecaca;border-radius:10px;background:#fff7f7}
+    .low-stock-list li.orange{border-color:#fed7aa;background:#fff7ed}
+    .low-stock-list strong{overflow-wrap:anywhere}
+    .low-stock-list span{flex-shrink:0;color:#991b1b;font-weight:700}
+    .low-stock-list li.orange span{color:#9a3412}
+    .dialog-actions{display:flex;justify-content:flex-end;margin-top:16px}
+    .dialog-actions button{min-height:40px;padding:8px 14px}
+    .page-groups{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-top:18px}
+    .page-group{padding:16px;border:1px solid #dbe3ec;border-radius:12px;background:#f8fafc}
+    .page-group h3{margin:0 0 12px;color:var(--text);font-size:16px}
+    .page-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px}
+    .page-grid[hidden],.account-bar[hidden],.login-form[hidden],.admin-summary-link[hidden]{display:none}
+    .page-card{display:block;min-height:112px;padding:18px;border:1px solid #dbe3ec;border-radius:12px;background:#fff;color:var(--text);text-decoration:none;transition:border-color .15s,transform .15s}
+    .page-card[hidden]{display:none}
+    .page-card:hover{transform:translateY(-2px);border-color:var(--primary)}
+    .page-card strong{display:block;margin-bottom:8px;color:var(--primary);font-size:17px}
+    .page-card span{color:var(--muted);font-size:14px;line-height:1.4}
+    @media(max-width:640px){body{padding:12px}.card{padding:18px}.login-form{grid-template-columns:1fr}.login-form button{width:100%}.account-bar{align-items:stretch;flex-direction:column}.account-bar button{width:100%}.summary-grid,.page-groups{grid-template-columns:1fr}}
+  </style>
+  <link rel="stylesheet" href="app-shell.css">
+  <script src="app-navigation.js" defer></script>
+</head>
+<body>
+  <main>
+    <section class="card" aria-labelledby="welcomeTitle">
+      <h1 id="welcomeTitle">Accueil QR/OCR</h1>
+      <p class="intro">Connectez-vous pour accéder aux outils de gestion, de stock et aux historiques.</p>
+      <form id="loginForm" class="login-form">
+        <div class="field">
+          <label for="loginUsername">Utilisateur</label>
+          <input id="loginUsername" name="username" autocomplete="username" required>
+        </div>
+        <div class="field">
+          <label for="loginPassword">Mot de passe</label>
+          <input id="loginPassword" name="password" type="password" autocomplete="current-password" required>
+        </div>
+        <button id="loginButton" type="submit">Connexion</button>
+      </form>
+      <div id="accountBar" class="account-bar" hidden>
+        <strong id="signedInAs"></strong>
+        <button id="logoutButton" class="secondary" type="button">Déconnexion</button>
+      </div>
+      <p id="authMessage" class="status" role="status" aria-live="polite"></p>
+    </section>
+
+    <section id="stockSummary" class="card stock-summary" aria-label="Résumé des alertes de stock" hidden>
+      <div class="summary-grid">
+        <div class="summary-item red"><strong id="redCount">—</strong><span>Alertes rouges</span></div>
+        <div class="summary-item orange"><strong id="orangeCount">—</strong><span>À surveiller</span></div>
+        <div class="summary-item green"><strong id="configuredCount">—</strong><span>Seuils configurés</span></div>
+      </div>
+      <p id="stockAlert" class="stock-alert" role="status" aria-live="polite" hidden></p>
+      <a id="stockSummaryLink" class="stock-summary-link admin-summary-link" href="stock-alertes.html" hidden>Gérer les seuils de stock</a>
+    </section>
+
+    <dialog id="lowStockDialog" class="low-stock-dialog" aria-labelledby="lowStockTitle" aria-describedby="lowStockDescription">
+      <h2 id="lowStockTitle">Produits à surveiller</h2>
+      <p id="lowStockDescription">Liste des produits en alerte rouge ou dans la zone de vigilance orange.</p>
+      <ul id="lowStockList" class="low-stock-list"></ul>
+      <div class="dialog-actions"><button id="closeLowStockDialog" class="secondary" type="button">Fermer</button></div>
+    </dialog>
+
+    <section id="pageOptions" class="card" aria-labelledby="pagesTitle" hidden>
+      <h2 id="pagesTitle">Accès aux pages</h2>
+      <p class="muted">Choisissez l’outil à ouvrir.</p>
+      <nav class="page-groups" aria-label="Pages de l’application">
+        <section class="page-group">
+          <h3>Scanner et historique</h3>
+          <div class="page-grid">
+            <a class="page-card" href="scan.html"><strong>Scanner QR et OCR</strong><span>Numériser un produit ou un document.</span></a>
+            <a class="page-card" href="historique.html"><strong>Historique des scans</strong><span>Consulter et rechercher les enregistrements.</span></a>
+          </div>
+        </section>
+        <section class="page-group">
+          <h3>Patients</h3>
+          <div class="page-grid">
+            <a class="page-card" href="historique-patients.html"><strong>Historique patient</strong><span>Rechercher les produits délivrés aux patients.</span></a>
+            <a class="page-card" href="patients.html"><strong>Fiches patients</strong><span>Consulter et mettre à jour le signalétique patient.</span></a>
+            <a class="page-card" href="delivrance.html"><strong>Délivrer à un patient</strong><span>Associer un produit à un patient et mettre à jour le stock.</span></a>
+          </div>
+        </section>
+        <section class="page-group">
+          <h3>Gestion du stock</h3>
+          <div class="page-grid">
+            <a class="page-card" href="stock.html"><strong>Gestion de stock</strong><span>Consulter l’inventaire et les sorties de stock.</span></a>
+            <a class="page-card" href="stock-alertes.html"><strong>Alertes et seuils de stock</strong><span>Visualiser les niveaux bas et configurer les seuils minimums.</span></a>
+            <a class="page-card" href="stock-qr.html"><strong>Entrée stock par QR</strong><span>Ajouter une sous-entité de stock identifiée par QR.</span></a>
+          </div>
+        </section>
+        <section class="page-group" id="administrationGroup" hidden>
+          <h3>Administration</h3>
+          <div class="page-grid">
+            <a id="superadminOption" class="page-card" href="superadmin.html" hidden><strong>Journal SuperAdmin</strong><span>Consulter l’ensemble des créations, modifications et suppressions.</span></a>
+          </div>
+        </section>
+      </nav>
+    </section>
+  </main>
+  <script src="auth.js"></script>
+  <script>
+    'use strict';
+
+    const loginForm = document.getElementById('loginForm');
+    const loginButton = document.getElementById('loginButton');
+    const loginUsername = document.getElementById('loginUsername');
+    const loginPassword = document.getElementById('loginPassword');
+    const accountBar = document.getElementById('accountBar');
+    const signedInAs = document.getElementById('signedInAs');
+    const pageOptions = document.getElementById('pageOptions');
+    const authMessage = document.getElementById('authMessage');
+    const stockSummary = document.getElementById('stockSummary');
+    let currentUser = window.AppAuth.user();
+    let summaryItems = [];
+
+    function showMessage(message, type) {
+      authMessage.textContent = message;
+      authMessage.className = `status ${type}`;
+    }
+
+    function renderAuthState(message) {
+      const signedIn = Boolean(currentUser);
+      loginForm.hidden = signedIn;
+      accountBar.hidden = !signedIn;
+      pageOptions.hidden = !signedIn;
+      stockSummary.hidden = !signedIn;
+      document.getElementById('superadminOption').hidden = currentUser?.role !== 'superadmin';
+      document.getElementById('administrationGroup').hidden = currentUser?.role !== 'superadmin';
+      document.getElementById('stockSummaryLink').hidden = !['admin', 'superadmin'].includes(currentUser?.role);
+      signedInAs.textContent = signedIn
+        ? `Connecté : ${currentUser.username} (${
+          currentUser.role === 'superadmin' ? 'SuperAdmin'
+            : currentUser.role === 'admin' ? 'administrateur' : 'utilisateur'
+        })`
+        : '';
+      if (message) {
+        showMessage(message, signedIn ? 'success' : 'info');
+      } else {
+        authMessage.textContent = '';
+        authMessage.className = 'status';
+      }
+      if (signedIn) loadStockSummary();
+      else clearStockSummary();
+    }
+
+    function clearStockSummary() {
+      document.getElementById('redCount').textContent = '—';
+      document.getElementById('orangeCount').textContent = '—';
+      document.getElementById('configuredCount').textContent = '—';
+      const alert = document.getElementById('stockAlert');
+      alert.textContent = '';
+      alert.hidden = true;
+      alert.className = 'stock-alert';
+      summaryItems = [];
+    }
+
+    async function loadStockSummary() {
+      const alert = document.getElementById('stockAlert');
+      alert.hidden = false;
+      alert.className = 'stock-alert';
+      alert.textContent = 'Chargement du récapitulatif des stocks…';
+      try {
+        const response = await fetch(`${window.AppAuth.API_BASE}/api/stock`, {
+          headers: window.AppAuth.headers()
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const items = await response.json();
+        summaryItems = items;
+        const configured = items.filter((item) => item.min_quantity > 0);
+        const red = configured.filter((item) => item.quantity <= item.min_quantity).length;
+        const orange = configured.filter((item) =>
+          item.quantity > item.min_quantity && item.quantity <= item.min_quantity * 2
+        ).length;
+        document.getElementById('redCount').textContent = String(red);
+        document.getElementById('orangeCount').textContent = String(orange);
+        document.getElementById('configuredCount').textContent = `${configured.length}/${items.length}`;
+        alert.hidden = false;
+        if (red || orange) {
+          alert.classList.add(red ? 'red' : 'orange');
+          const message = red
+            ? `Stock bas : ${red} sous seuil${orange ? ` · ${orange} à surveiller` : ''}.`
+            : `${orange} à surveiller.`;
+          alert.replaceChildren(document.createTextNode(message));
+          const detailsButton = document.createElement('button');
+          detailsButton.className = 'stock-alert-detail';
+          detailsButton.type = 'button';
+          detailsButton.textContent = 'Voir les produits';
+          detailsButton.addEventListener('click', showLowStockProducts);
+          alert.append(detailsButton);
+        } else if (orange) {
+          alert.classList.add('orange');
+          alert.textContent = `${orange} produit(s) sont dans la zone de vigilance.`;
+        } else if (configured.length < items.length) {
+          alert.classList.add('orange');
+          alert.textContent = `${items.length - configured.length} produit(s) n’ont pas encore de seuil configuré.`;
+        } else {
+          alert.classList.add('green');
+          alert.textContent = 'Aucune alerte : les niveaux de stock sont au-dessus des seuils configurés.';
+        }
+      } catch (error) {
+        alert.classList.add('red');
+        alert.textContent = `Impossible de charger les alertes de stock : ${error.message}`;
+      }
+    }
+
+    function showLowStockProducts() {
+      const lowStockItems = summaryItems.filter((item) =>
+        item.min_quantity > 0 && item.quantity <= item.min_quantity * 2
+      );
+      const list = document.getElementById('lowStockList');
+      list.replaceChildren();
+      for (const item of lowStockItems) {
+        const isRed = item.quantity <= item.min_quantity;
+        const entry = document.createElement('li');
+        if (!isRed) entry.classList.add('orange');
+        const denomination = document.createElement('strong');
+        denomination.textContent = item.denomination;
+        const quantity = document.createElement('span');
+        quantity.textContent = `${isRed ? 'Alerte rouge' : 'À surveiller'} — Stock : ${item.quantity} / Seuil : ${item.min_quantity}`;
+        entry.append(denomination, quantity);
+        list.append(entry);
+      }
+      document.getElementById('lowStockDialog').showModal();
+    }
+
+    document.getElementById('closeLowStockDialog').addEventListener('click', () => {
+      document.getElementById('lowStockDialog').close();
+    });
+
+    loginForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      loginButton.disabled = true;
+      try {
+        currentUser = await window.AppAuth.login(loginUsername.value.trim(), loginPassword.value);
+        loginPassword.value = '';
+        renderAuthState(`Session ${
+          currentUser.role === 'superadmin' ? 'SuperAdmin'
+            : currentUser.role === 'admin' ? 'administrateur' : 'utilisateur'
+          } ouverte.`);
+      } catch (error) {
+        showMessage(`Connexion impossible : ${error.message}`, 'error');
+      } finally {
+        loginButton.disabled = false;
+      }
+    });
+
+    document.getElementById('logoutButton').addEventListener('click', () => {
+      window.AppAuth.logout();
+      currentUser = null;
+      renderAuthState('Vous êtes déconnecté.');
+    });
+
+    renderAuthState(currentUser
+      ? `Session ${
+        currentUser.role === 'superadmin' ? 'SuperAdmin'
+          : currentUser.role === 'admin' ? 'administrateur' : 'utilisateur'
+      } ouverte.`
+      : 'Connectez-vous pour afficher les pages disponibles.');
+  </script>
+</body>
+</html>

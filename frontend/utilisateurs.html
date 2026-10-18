@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f4c81">
+  <title>Gestion des utilisateurs</title>
+  <style>
+    :root{--primary:#0f4c81;--primary2:#0a365c;--bg:#eef2f7;--card:#fff;--text:#1f2937;--muted:#64748b;--border:#dbe3ec;--danger:#b91c1c}
+    *{box-sizing:border-box} body{margin:0;padding:16px;background:var(--bg);color:var(--text);font-family:Arial,sans-serif}
+    .container{max-width:1200px;margin:auto}.card{background:var(--card);border-radius:16px;padding:20px;margin-bottom:16px;box-shadow:0 6px 22px rgba(15,76,129,.08)}
+    h1{margin:0 0 6px;color:var(--primary);font-size:28px}h2{margin:0 0 12px;color:var(--primary)}.muted{color:var(--muted)}
+    .header,.actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.header{justify-content:space-between}
+    .btn{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:10px 14px;border:0;border-radius:10px;background:var(--primary);color:#fff;font-weight:700;text-decoration:none;cursor:pointer}
+    .btn:hover{background:var(--primary2)}.btn.secondary{background:#475569}.btn.light{background:#fff;color:var(--text);border:1px solid var(--border)}.btn.danger{background:var(--danger)}.btn.small{min-height:34px;padding:7px 10px;font-size:14px}.btn:disabled{opacity:.55;cursor:not-allowed}
+    .admin-login{display:grid;grid-template-columns:1fr 1fr auto auto;gap:10px;align-items:end;margin-top:16px}.admin-login input{width:100%;min-height:42px;padding:10px;border:1px solid #cbd5e1;border-radius:10px}
+    .filters{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:12px;align-items:end}.field label{display:block;margin-bottom:6px;font-weight:700;font-size:14px}.field input,.field select{width:100%;min-height:44px;padding:10px;border:1px solid #cbd5e1;border-radius:10px;background:#fff}
+    .status{display:none;margin-top:14px;padding:12px;border-radius:10px}.status.info{display:block;background:#dbeafe;color:#1e40af}.status.success{display:block;background:#dcfce7;color:#166534}.status.error{display:block;background:#fee2e2;color:#991b1b}
+    .user-list{display:grid;gap:12px;margin-top:16px}.user-item{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;padding:14px;background:#f8fafc;border:1px solid var(--border);border-left:5px solid var(--primary);border-radius:12px}
+    .badge{display:inline-block;margin-left:6px;padding:4px 9px;border-radius:999px;background:#dbeafe;color:#1e40af;font-size:12px;font-weight:700}.badge.off{background:#fee2e2;color:#991b1b}
+    [hidden]{display:none!important}
+    @media(max-width:850px){.filters,.admin-login{grid-template-columns:1fr 1fr}}@media(max-width:620px){body{padding:10px}.card{padding:15px}.filters,.admin-login{grid-template-columns:1fr}.header .btn,.admin-login .btn{width:100%}}
+  </style>
+  <link rel="stylesheet" href="app-shell.css">
+  <script src="app-navigation.js" defer></script>
+</head>
+<body>
+<div class="container">
+  <section class="card">
+    <div class="header">
+      <div><h1>Gestion des utilisateurs</h1><div class="muted">Création, modification, activation et suppression des comptes.</div></div>
+    </div>
+    <div class="admin-login">
+      <div id="loginUsernameField" class="field"><label for="loginUsername">Utilisateur</label><input id="loginUsername" type="text" autocomplete="username"></div>
+      <div id="loginPasswordField" class="field"><label for="loginPassword">Mot de passe</label><input id="loginPassword" type="password" autocomplete="current-password"></div>
+      <button id="loginButton" class="btn" type="button">Connexion</button>
+      <strong id="signedInAs" hidden></strong>
+      <button id="logoutButton" class="btn secondary" type="button" hidden>Déconnexion</button>
+    </div>
+    <div id="authStatus" class="status"></div>
+  </section>
+
+  <section id="userManagement" class="card" hidden>
+    <h2>Comptes</h2>
+    <form id="userForm">
+      <input id="userId" type="hidden">
+      <div class="filters">
+        <div class="field"><label for="userName">Nom d'utilisateur</label><input id="userName" type="text" maxlength="255" required autocomplete="off"></div>
+        <div class="field"><label for="userPassword">Mot de passe</label><input id="userPassword" type="password" minlength="12" autocomplete="new-password" placeholder="12 caractères minimum."></div>
+        <div class="field"><label for="userRole">Rôle</label><select id="userRole"><option value="user">Utilisateur — consulter et créer</option><option value="admin">Administrateur — tous les droits</option></select></div>
+        <div id="userActiveField" class="field" hidden><label for="userActive">État du compte</label><select id="userActive"><option value="true">Actif</option><option value="false">Désactivé</option></select></div>
+      </div>
+      <div class="actions" style="margin-top:12px"><button id="saveUser" class="btn" type="submit">Créer l’utilisateur</button><button id="cancelUserEdit" class="btn light" type="button" hidden>Annuler la modification</button><button id="refreshUsers" class="btn secondary" type="button">Actualiser</button></div>
+    </form>
+    <div id="userStatus" class="status"></div>
+    <div id="userList" class="user-list"></div>
+  </section>
+</div>
+
+<script src="auth.js"></script>
+<script>
+'use strict';
+
+const API_BASE = window.AppAuth.API_BASE;
+const $ = id => document.getElementById(id);
+let currentUser = window.AppAuth.user();
+const isAdmin = () => ['admin', 'superadmin'].includes(currentUser?.role);
+const roleLabel = role => role === 'superadmin' ? 'SuperAdmin' : role === 'admin' ? 'Administrateur' : 'Utilisateur';
+const authHeaders = (headers = {}) => window.AppAuth.headers(headers);
+
+function setStatus(id, message, type = 'info') { $(id).textContent = message; $(id).className = `status ${type}`; }
+const authStatus = (m, t) => setStatus('authStatus', m, t);
+const userStatus = (m, t) => setStatus('userStatus', m, t);
+
+function setAdminState() {
+  const connected = Boolean(window.AppAuth.token() && currentUser);
+  $('loginUsernameField').hidden = connected;
+  $('loginPasswordField').hidden = connected;
+  $('loginButton').hidden = connected;
+  $('logoutButton').hidden = !connected;
+  $('signedInAs').hidden = !connected;
+  $('signedInAs').textContent = connected ? `Connecté : ${currentUser.username} (${roleLabel(currentUser.role)})` : '';
+  $('userManagement').hidden = !(connected && isAdmin());
+  if (!connected || !isAdmin()) $('userList').replaceChildren();
+}
+
+function logout(message = 'Session fermée.') {
+  window.AppAuth.logout();
+  currentUser = null;
+  setAdminState();
+  authStatus(message, 'info');
+}
+
+async function request(url, options = {}) {
+  const response = await fetch(url, { ...options, headers: authHeaders(options.headers) });
+  const result = await response.json();
+  if (response.status === 401) { logout('Session expirée.'); throw new Error('Session expirée.'); }
+  if (!response.ok) throw new Error(result.detail || `HTTP ${response.status}`);
+  return result;
+}
+
+async function login() {
+  $('loginButton').disabled = true;
+  try {
+    currentUser = await window.AppAuth.login($('loginUsername').value.trim(), $('loginPassword').value);
+    $('loginPassword').value = '';
+    setAdminState();
+    if (isAdmin()) { authStatus('Connexion réussie.', 'success'); await loadUsers(); }
+    else authStatus('Accès réservé aux administrateurs.', 'error');
+  } catch (error) {
+    authStatus(`Connexion impossible : ${error.message}`, 'error');
+  } finally { $('loginButton').disabled = false; }
+}
+
+async function loadUsers() {
+  if (!isAdmin()) return;
+  $('userList').textContent = 'Chargement des utilisateurs...';
+  try {
+    const users = await request(`${API_BASE}/api/admin/users`);
+    $('userList').replaceChildren();
+    users.forEach(user => {
+      const item = document.createElement('article');
+      item.className = 'user-item';
+      const meta = document.createElement('div');
+      const name = document.createElement('strong');
+      name.textContent = user.username;
+      const role = document.createElement('span');
+      role.className = 'badge';
+      role.textContent = roleLabel(user.role);
+      const state = document.createElement('span');
+      state.className = `badge${user.active ? '' : ' off'}`;
+      state.textContent = user.active ? 'Actif' : 'Désactivé';
+      meta.append(name, role, state);
+      const actions = document.createElement('div');
+      actions.className = 'actions';
+      const edit = button('Modifier', 'btn secondary small', () => editUser(user));
+      const toggle = button(user.active ? 'Désactiver' : 'Activer', 'btn light small', () => updateUser(user.id, { active: !user.active }));
+      const remove = button('Supprimer', 'btn danger small', () => deleteUser(user));
+      remove.disabled = user.id === currentUser.id;
+      actions.append(edit, toggle, remove);
+      item.append(meta, actions);
+      $('userList').append(item);
+    });
+    if (!users.length) $('userList').textContent = 'Aucun utilisateur.';
+  } catch (error) {
+    $('userList').textContent = `Impossible de charger les utilisateurs : ${error.message}`;
+  }
+}
+
+function button(label, className, onclick) {
+  const element = document.createElement('button');
+  element.type = 'button';
+  element.className = className;
+  element.textContent = label;
+  element.onclick = onclick;
+  return element;
+}
+
+function resetUserForm() {
+  $('userForm').reset();
+  $('userId').value = '';
+  $('userRole').value = 'user';
+  $('userActive').value = 'true';
+  $('userActiveField').hidden = true;
+  $('userPassword').required = true;
+  $('userPassword').placeholder = '12 caractères minimum.';
+  $('saveUser').textContent = 'Créer l’utilisateur';
+  $('cancelUserEdit').hidden = true;
+}
+
+function editUser(user) {
+  $('userId').value = user.id;
+  $('userName').value = user.username;
+  $('userPassword').value = '';
+  $('userPassword').required = false;
+  $('userPassword').placeholder = 'Laisser vide pour conserver le mot de passe.';
+  $('userRole').value = user.role;
+  $('userActive').value = String(user.active);
+  $('userActiveField').hidden = false;
+  $('saveUser').textContent = 'Enregistrer les changements';
+  $('cancelUserEdit').hidden = false;
+  $('userName').focus();
+}
+
+async function updateUser(userId, changes) {
+  try {
+    const result = await request(`${API_BASE}/api/admin/users/${userId}`, {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(changes)
+    });
+    userStatus(`Compte « ${result.username} » mis à jour.`, 'success');
+    await loadUsers();
+  } catch (error) { userStatus(`Modification impossible : ${error.message}`, 'error'); }
+}
+
+async function deleteUser(user) {
+  if (user.id === currentUser?.id) return;
+  if (!confirm(`Supprimer définitivement le compte « ${user.username} » ?`)) return;
+  try {
+    await request(`${API_BASE}/api/admin/users/${user.id}`, { method: 'DELETE' });
+    userStatus(`Compte « ${user.username} » supprimé.`, 'success');
+    await loadUsers();
+  } catch (error) { userStatus(`Suppression impossible : ${error.message}`, 'error'); }
+}
+
+async function saveUser(event) {
+  event.preventDefault();
+  const userId = $('userId').value;
+  const payload = { username: $('userName').value.trim(), role: $('userRole').value };
+  if (userId) payload.active = $('userActive').value === 'true';
+  if ($('userPassword').value) payload.password = $('userPassword').value;
+  if (!userId && !payload.password) { userStatus('Un mot de passe est requis pour créer un compte.', 'error'); return; }
+  $('saveUser').disabled = true;
+  try {
+    const result = await request(userId ? `${API_BASE}/api/admin/users/${userId}` : `${API_BASE}/api/admin/users`, {
+      method: userId ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+    });
+    userStatus(userId ? `Compte « ${result.username} » mis à jour.` : `Compte « ${result.username} » créé.`, 'success');
+    resetUserForm();
+    await loadUsers();
+  } catch (error) { userStatus(`Enregistrement impossible : ${error.message}`, 'error'); }
+  finally { $('saveUser').disabled = false; }
+}
+
+$('loginButton').onclick = login;
+$('logoutButton').onclick = () => logout();
+$('refreshUsers').onclick = loadUsers;
+$('loginPassword').onkeydown = event => { if (event.key === 'Enter') login(); };
+$('loginUsername').onkeydown = event => { if (event.key === 'Enter') $('loginPassword').focus(); };
+$('userForm').addEventListener('submit', saveUser);
+$('cancelUserEdit').onclick = resetUserForm;
+
+async function initialize() {
+  if (window.AppAuth.token()) {
+    try {
+      currentUser = await request(`${API_BASE}/api/auth/me`);
+    } catch {
+      window.AppAuth.logout();
+      currentUser = null;
+    }
+  }
+  setAdminState();
+  if (!currentUser) authStatus('Connectez-vous avec un compte administrateur.', 'info');
+  else if (!isAdmin()) authStatus('Accès réservé aux administrateurs.', 'error');
+  else await loadUsers();
+}
+initialize();
+</script>
+</body>
+</html>

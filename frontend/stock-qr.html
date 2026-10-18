@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f4c81">
+  <title>Entrée de stock par QR Code</title>
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <style>
+    :root{--primary:#0f4c81;--primary-dark:#0a365c;--bg:#eef2f7;--text:#1f2937;--muted:#64748b;--border:#dbe3ec;--danger:#b91c1c}
+    *{box-sizing:border-box}body{margin:0;padding:16px;background:var(--bg);color:var(--text);font-family:Arial,sans-serif}
+    .container{max-width:1200px;margin:auto}.card{margin-bottom:16px;padding:20px;background:#fff;border-radius:16px;box-shadow:0 6px 22px rgba(15,76,129,.08)}
+    h1{margin:0 0 6px;color:var(--primary);font-size:28px}h2{margin:0 0 10px}p{line-height:1.45}.muted{color:var(--muted)}
+    .header,.actions,.auth-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.header,.auth-bar{justify-content:space-between}
+    .btn{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:10px 14px;border:0;border-radius:10px;background:var(--primary);color:#fff;font-weight:700;text-decoration:none;cursor:pointer}
+    .btn:hover{background:var(--primary-dark)}.btn.secondary{background:#475569}.btn.light{background:#fff;color:var(--text);border:1px solid var(--border)}.btn:disabled{opacity:.55;cursor:not-allowed}
+    .field{min-width:0}.field label{display:block;margin:14px 0 6px;font-weight:700;font-size:14px}.field input,.field select{width:100%;min-height:44px;padding:10px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;font:inherit}
+    #serialForm{display:flex;align-items:end;gap:10px;margin-top:10px}#serialForm .field{flex:1}#serialForm .field label{margin-top:0}#serialForm button{flex:0 0 auto}
+    .login-grid{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end;margin-top:16px}.login-grid label{margin-top:0}
+    .status{display:none;margin-top:14px;padding:12px;border-radius:10px;line-height:1.4}.status.info{display:block;background:#dbeafe;color:#1e40af}.status.success{display:block;background:#dcfce7;color:#166534}.status.error{display:block;background:#fee2e2;color:#991b1b}
+    #qrReader{width:100%;overflow:hidden;border:1px solid var(--border);border-radius:12px}#qrReader video{border-radius:10px}
+    .result{padding:16px;border:1px solid var(--border);border-radius:12px;background:#f8fafc}.result strong{display:block;font-size:18px}.result .quantity{margin-top:8px;color:var(--primary);font-size:24px;font-weight:700}
+    .file-picker{display:block;width:100%;min-height:44px;margin-top:10px;padding:10px;border:1px solid #cbd5e1;border-radius:10px;background:#fff}
+    [hidden]{display:none!important}
+    @media(max-width:600px){body{padding:10px}.card{padding:15px}.header{align-items:stretch}.header .btn{width:100%}.login-grid{grid-template-columns:1fr}.login-grid .btn{width:100%}#serialForm{align-items:stretch;flex-direction:column}#serialForm button{width:100%}}
+  </style>
+  <link rel="stylesheet" href="app-shell.css">
+  <script src="app-navigation.js" defer></script>
+</head>
+<body>
+<main class="container">
+  <section class="card">
+    <div class="header">
+      <div><h1>Entrée de stock par QR Code</h1><div class="muted">Chaque QR crée une sous-entité unique rattachée à la dénomination sélectionnée.</div></div>
+    </div>
+    <div id="authBar" class="auth-bar" hidden>
+      <strong id="signedInAs"></strong>
+      <button id="logoutButton" class="btn light" type="button">Déconnexion</button>
+    </div>
+    <form id="loginForm" class="login-grid">
+      <div class="field"><label for="loginUsername">Utilisateur</label><input id="loginUsername" autocomplete="username" required></div>
+      <div class="field"><label for="loginPassword">Mot de passe</label><input id="loginPassword" type="password" autocomplete="current-password" required></div>
+      <button id="loginButton" class="btn" type="submit">Connexion</button>
+    </form>
+    <div id="authStatus" class="status"></div>
+  </section>
+
+  <section id="scanCard" class="card" hidden>
+    <h2>Créer une sous-entité depuis un QR</h2>
+    <p class="muted">Sélectionnez la dénomination parente. Chaque QR doit être unique et crée une sous-entité d’une unité avec sa date d’entrée, son lot et sa date de péremption repris de la fiche parente. Le même QR ne peut pas être ajouté deux fois.</p>
+    <div class="field"><label for="stockItemSelect">Dénomination parente</label><select id="stockItemSelect" required><option value="">Chargement des produits...</option></select></div>
+    <form id="serialForm">
+      <div class="field"><label for="serialInput">Numéro de série QR</label><input id="serialInput" type="text" maxlength="255" autocomplete="off" placeholder="Scannez ou saisissez le numéro de série" required></div>
+      <button id="addSerial" class="btn secondary" type="submit">Ajouter le QR au stock</button>
+    </form>
+    <div class="field"><label for="cameraSelect">Caméra</label><select id="cameraSelect"><option value="">Recherche des caméras...</option></select></div>
+    <div class="actions" style="margin:12px 0"><button id="startScan" class="btn" type="button">Démarrer le scanner</button></div>
+    <div id="qrReader"></div>
+    <label for="qrImage" class="field" style="display:block;margin-top:14px;font-weight:700">Ou lire un QR depuis une image</label>
+    <input id="qrImage" class="file-picker" type="file" accept="image/*">
+    <button id="readImage" class="btn secondary" type="button">Lire le QR de l’image</button>
+    <div id="scanStatus" class="status" aria-live="polite"></div>
+  </section>
+
+  <section id="resultCard" class="card" hidden>
+    <h2>Dernière lecture</h2>
+    <div class="result">
+      <strong id="resultDenomination"></strong>
+      <div id="resultSerial" class="muted"></div>
+      <div id="resultEntryDate" class="muted"></div>
+      <div id="resultLot" class="muted"></div>
+      <div id="resultExpiration" class="muted"></div>
+      <div id="resultQuantity" class="quantity"></div>
+    </div>
+  </section>
+</main>
+<script src="auth.js"></script>
+<script src="gs1.js"></script>
+<script>
+'use strict';
+
+const API = `${window.AppAuth.API_BASE}/api`;
+const $ = (id) => document.getElementById(id);
+let currentUser = window.AppAuth.user();
+let scanner = null;
+let cameraRunning = false;
+let processingScan = false;
+let cameraScanArmed = false;
+let stockItems = [];
+
+function selectedStockItem() {
+  const selectedId = Number($('stockItemSelect').value);
+  return stockItems.find((item) => item.id === selectedId);
+}
+
+function updateStockItemOptions() {
+  const selectedId = $('stockItemSelect').value;
+  const availableItems = stockItems;
+  $('stockItemSelect').replaceChildren(new Option('Choisissez un produit...', ''));
+  if (!availableItems.length) {
+    $('stockItemSelect').add(new Option('Aucun produit disponible', ''));
+    return;
+  }
+  for (const item of availableItems) {
+    const option = new Option(
+      `${item.denomination} — Stock : ${item.quantity} — Lot : ${item.numero_lot || '—'} — Péremption : ${item.expiration_date || '—'}`,
+      String(item.id)
+    );
+    $('stockItemSelect').add(option);
+  }
+  if (availableItems.some((item) => String(item.id) === selectedId)) {
+    $('stockItemSelect').value = selectedId;
+  }
+}
+
+function updateScanControls() {
+  const hasSelectedItem = Boolean(selectedStockItem());
+  $('stockItemSelect').disabled = !currentUser || processingScan || cameraRunning;
+  $('serialInput').disabled = !currentUser || processingScan || cameraRunning || !hasSelectedItem;
+  $('addSerial').disabled = !currentUser || processingScan || cameraRunning || !hasSelectedItem;
+  $('startScan').disabled = !currentUser || processingScan || cameraRunning || !hasSelectedItem;
+  $('readImage').disabled = !currentUser || processingScan || !hasSelectedItem;
+}
+
+function focusSerialInput() {
+  if (currentUser && selectedStockItem() && !processingScan && !cameraRunning) {
+    $('serialInput').focus();
+  }
+}
+
+function showStatus(element, message, type='info') {
+  element.textContent = message;
+  element.className = `status ${type}`;
+}
+
+function updateAuthState() {
+  const signedIn = Boolean(currentUser);
+  $('loginForm').hidden = signedIn;
+  $('authBar').hidden = !signedIn;
+  $('scanCard').hidden = !signedIn;
+  $('signedInAs').textContent = signedIn
+    ? `Connecté : ${currentUser.username} (${
+      currentUser.role === 'superadmin' ? 'SuperAdmin'
+        : currentUser.role === 'admin' ? 'administrateur' : 'utilisateur'
+    })`
+    : '';
+  if (!signedIn) $('resultCard').hidden = true;
+  updateScanControls();
+}
+
+async function stopCamera() {
+  if (scanner && cameraRunning) {
+    await scanner.stop();
+    cameraRunning = false;
+  }
+}
+
+async function startCamera() {
+  if (!currentUser || processingScan || typeof Html5Qrcode === 'undefined') return;
+  if (!selectedStockItem()) {
+    showStatus($('scanStatus'), 'Sélectionnez d’abord le produit à incrémenter.', 'error');
+    return;
+  }
+  const cameraId = $('cameraSelect').value;
+  if (!cameraId) {
+    showStatus($('scanStatus'), 'Sélectionnez une caméra disponible.', 'error');
+    return;
+  }
+  try {
+    await stopCamera();
+    if (!scanner) scanner = new Html5Qrcode('qrReader', { formatsToSupport: window.Gs1.scannerFormats() });
+    $('startScan').disabled = true;
+    showStatus($('scanStatus'), 'Démarrage de la caméra...', 'info');
+    await scanner.start(
+      { deviceId: { exact: cameraId } },
+      { fps: 10, qrbox: { width: 250, height: 250 } },
+      handleQrRead,
+      () => {}
+    );
+    cameraRunning = true;
+    cameraScanArmed = true;
+    $('startScan').textContent = 'Scanner le produit suivant';
+    showStatus($('scanStatus'), 'Scanner actif. Présentez le QR de la sous-entité.', 'info');
+  } catch (error) {
+    showStatus($('scanStatus'), `Impossible de démarrer la caméra : ${error.message}`, 'error');
+  } finally {
+    updateScanControls();
+  }
+}
+
+async function handleQrRead(decodedText) {
+  if (processingScan || !cameraScanArmed) return;
+  cameraScanArmed = false;
+  processingScan = true;
+  $('startScan').disabled = true;
+  $('serialInput').value = decodedText;
+  showStatus($('scanStatus'), `QR lu : ${decodedText}. Mise à jour du stock...`, 'info');
+  try {
+    await stopCamera();
+    await addUnitBySerial(decodedText);
+  } catch (error) {
+    showStatus($('scanStatus'), error.message, 'error');
+  } finally {
+    processingScan = false;
+    updateScanControls();
+    focusSerialInput();
+  }
+}
+
+async function addUnitBySerial(decodedText) {
+  const gs1 = window.Gs1.parse(decodedText);
+  const serial = (gs1.serial || decodedText).trim();
+  if (!serial) throw new Error('Le QR Code ne contient pas de numéro de série.');
+  const item = selectedStockItem();
+  if (!item) throw new Error('Sélectionnez d’abord le produit à incrémenter.');
+  const response = await fetch(`${API}/stock/qr-addition`, {
+    method: 'POST',
+    headers: window.AppAuth.headers({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({
+      stock_item_id: item.id,
+      numero_serie: serial,
+      expiration_date: gs1.expiration || null
+    })
+  });
+  const result = await response.json();
+  if (response.status === 401) {
+    logout();
+    throw new Error('Session expirée. Connectez-vous à nouveau.');
+  }
+  if (!response.ok) throw new Error(result.detail || `HTTP ${response.status}`);
+  item.quantity = result.quantity_after;
+  updateStockItemOptions();
+  $('resultDenomination').textContent = result.denomination;
+  $('resultSerial').textContent = `Numéro de série : ${result.numero_serie}`;
+  $('resultEntryDate').textContent = `Date d’entrée : ${item.entry_date}`;
+  $('resultLot').textContent = `Numéro de lot : ${item.numero_lot || '—'}`;
+  $('resultExpiration').textContent = `Date de péremption : ${gs1.expiration || item.expiration_date || '—'}`;
+  if (gs1.gtin) $('resultSerial').textContent += ` — Code produit : ${gs1.gtin}`;
+  $('resultQuantity').textContent = `Stock maintenant : ${result.quantity_after}`;
+  $('resultCard').hidden = false;
+  $('serialInput').value = '';
+  showStatus(
+    $('scanStatus'),
+    `La sous-entité QR ${serial} a été créée avec une unité. Démarrez le scan suivant lorsque vous êtes prêt.`,
+    'success'
+  );
+}
+
+async function readQrImage() {
+  const file = $('qrImage').files[0];
+  if (!file) {
+    showStatus($('scanStatus'), 'Choisissez d’abord une image contenant un QR Code.', 'error');
+    return;
+  }
+  if (processingScan) return;
+  if (!selectedStockItem()) {
+    showStatus($('scanStatus'), 'Sélectionnez d’abord le produit à incrémenter.', 'error');
+    return;
+  }
+  processingScan = true;
+  updateScanControls();
+  try {
+    cameraScanArmed = false;
+    await stopCamera();
+    if (typeof Html5Qrcode === 'undefined') throw new Error('La bibliothèque QR Code n’est pas disponible.');
+    if (!scanner || typeof scanner.scanFile !== 'function') {
+      scanner = new Html5Qrcode('qrReader', { formatsToSupport: window.Gs1.scannerFormats() });
+    }
+    if (typeof scanner.scanFile !== 'function') {
+      throw new Error('La lecture des images QR n’est pas disponible dans la version chargée. Rechargez la page puis réessayez.');
+    }
+    showStatus($('scanStatus'), 'Lecture du QR Code de l’image...', 'info');
+    const decodedText = await scanner.scanFile(file, true);
+    await addUnitBySerial(decodedText);
+  } catch (error) {
+    showStatus($('scanStatus'), `Lecture impossible : ${error.message}`, 'error');
+  } finally {
+    processingScan = false;
+    updateScanControls();
+    focusSerialInput();
+  }
+}
+
+async function addManualSerial(event) {
+  event.preventDefault();
+  if (processingScan || cameraRunning) return;
+  if (!selectedStockItem()) {
+    showStatus($('scanStatus'), 'Sélectionnez d’abord le produit à incrémenter.', 'error');
+    return;
+  }
+  processingScan = true;
+  updateScanControls();
+  try {
+    await addUnitBySerial($('serialInput').value);
+  } catch (error) {
+    showStatus($('scanStatus'), error.message, 'error');
+  } finally {
+    processingScan = false;
+    updateScanControls();
+    focusSerialInput();
+  }
+}
+
+async function loadStockItems() {
+  const response = await fetch(`${API}/stock`, { headers: window.AppAuth.headers() });
+  if (response.status === 401) {
+    logout();
+    throw new Error('Session expirée. Connectez-vous à nouveau.');
+  }
+  if (!response.ok) throw new Error(`Impossible de charger les produits : HTTP ${response.status}`);
+  stockItems = await response.json();
+  updateStockItemOptions();
+  if (!stockItems.length) {
+    showStatus($('scanStatus'), 'Aucun produit disponible. Ajoutez d’abord une dénomination dans la gestion de stock.', 'error');
+  }
+  updateScanControls();
+}
+
+async function loadCameras() {
+  if (typeof Html5Qrcode === 'undefined') {
+    showStatus($('scanStatus'), 'La bibliothèque QR Code n’a pas pu être chargée.', 'error');
+    return;
+  }
+  try {
+    const cameras = await Html5Qrcode.getCameras();
+    $('cameraSelect').replaceChildren(...cameras.map((camera, index) =>
+      new Option(camera.label || `Caméra ${index + 1}`, camera.id)
+    ));
+    if (!cameras.length) {
+      $('cameraSelect').add(new Option('Aucune caméra disponible', ''));
+      $('startScan').disabled = true;
+      return;
+    }
+    const preferred = cameras.find((camera) => /back|rear|environment|arrière|dos/i.test(camera.label));
+    $('cameraSelect').value = (preferred || cameras[0]).id;
+  } catch (error) {
+    $('cameraSelect').replaceChildren(new Option('Caméras indisponibles', ''));
+    showStatus($('scanStatus'), `Impossible de rechercher les caméras : ${error.message}`, 'error');
+  }
+}
+
+async function login(event) {
+  event.preventDefault();
+  $('loginButton').disabled = true;
+  try {
+    currentUser = await window.AppAuth.login($('loginUsername').value.trim(), $('loginPassword').value);
+    $('loginPassword').value = '';
+    updateAuthState();
+    showStatus($('authStatus'), 'Connexion réussie.', 'success');
+    await loadStockItems();
+    await loadCameras();
+  } catch (error) {
+    showStatus($('authStatus'), `Connexion impossible : ${error.message}`, 'error');
+  } finally {
+    $('loginButton').disabled = false;
+  }
+}
+
+function logout() {
+  cameraScanArmed = false;
+  stopCamera().catch((error) => {
+    showStatus($('scanStatus'), `Impossible d’arrêter la caméra : ${error.message}`, 'error');
+  });
+  window.AppAuth.logout();
+  currentUser = null;
+  updateAuthState();
+  showStatus($('authStatus'), 'Session fermée.', 'info');
+  $('scanStatus').className = 'status';
+}
+
+$('loginForm').addEventListener('submit', login);
+$('serialForm').addEventListener('submit', addManualSerial);
+$('logoutButton').addEventListener('click', logout);
+$('startScan').addEventListener('click', startCamera);
+$('stockItemSelect').addEventListener('change', () => {
+  $('resultCard').hidden = true;
+  if (!selectedStockItem()) {
+    showStatus($('scanStatus'), 'Sélectionnez le produit à incrémenter avant de scanner.', 'info');
+  } else {
+    showStatus($('scanStatus'), `Produit sélectionné : ${selectedStockItem().denomination}.`, 'info');
+  }
+  updateScanControls();
+});
+$('cameraSelect').addEventListener('change', () => {
+  if (cameraRunning) startCamera();
+});
+$('readImage').addEventListener('click', readQrImage);
+window.addEventListener('beforeunload', () => {
+  if (scanner && cameraRunning) scanner.stop();
+});
+
+async function initialize() {
+  updateAuthState();
+  if (!currentUser) {
+    showStatus($('authStatus'), 'Connectez-vous pour enregistrer des entrées de stock.', 'info');
+    return;
+  }
+  try {
+    const response = await fetch(`${API}/auth/me`, { headers: window.AppAuth.headers() });
+    if (!response.ok) throw new Error('Session invalide.');
+    currentUser = await response.json();
+    updateAuthState();
+    await loadStockItems();
+    await loadCameras();
+  } catch {
+    logout();
+    showStatus($('authStatus'), 'Votre session a expiré. Connectez-vous à nouveau.', 'error');
+  }
+}
+
+initialize();
+</script>
+</body>
+</html>

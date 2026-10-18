@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f4c81">
+  <title>Gestion de stock</title>
+  <style>
+    :root{--primary:#0f4c81;--primary-dark:#0a365c;--bg:#eef2f7;--text:#1f2937;--muted:#64748b;--border:#dbe3ec;--danger:#b91c1c}
+    *{box-sizing:border-box}body{margin:0;padding:16px;background:var(--bg);color:var(--text);font-family:Arial,sans-serif}
+    .container{max-width:1200px;margin:auto}.card{margin-bottom:16px;padding:20px;background:#fff;border-radius:16px;box-shadow:0 6px 22px rgba(15,76,129,.08)}
+    h1{margin:0 0 6px;color:var(--primary);font-size:28px}h2{margin:0 0 14px}.muted{color:var(--muted)}
+    .header,.toolbar,.actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.header,.toolbar{justify-content:space-between}
+    .btn{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:10px 14px;border:0;border-radius:10px;background:var(--primary);color:#fff;font-weight:700;text-decoration:none;cursor:pointer}
+    .btn:hover{background:var(--primary-dark)}.btn.secondary{background:#475569}.btn.light{background:#fff;color:var(--text);border:1px solid var(--border)}.btn.danger{background:var(--danger)}.btn.small{min-height:34px;padding:7px 10px;font-size:14px}.btn:disabled{opacity:.55;cursor:not-allowed}
+    .form-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.field{min-width:0}.field label{display:block;margin-bottom:6px;font-size:14px;font-weight:700}.field input{width:100%;min-height:44px;padding:10px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;font:inherit}
+    .status{display:none;margin-top:14px;padding:12px;border-radius:10px}.status.info{display:block;background:#dbeafe;color:#1e40af}.status.success{display:block;background:#dcfce7;color:#166534}.status.error{display:block;background:#fee2e2;color:#991b1b}
+    .filters{max-width:480px;margin:16px 0}.table-wrap{overflow:auto;border:1px solid var(--border);border-radius:12px}table{width:100%;min-width:850px;border-collapse:collapse}th,td{padding:11px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:top}th{background:var(--primary);color:#fff;white-space:nowrap}.empty{text-align:center;padding:30px;color:var(--muted)}.quantity{font-weight:700;color:var(--primary)}.expired{color:var(--danger);font-weight:700}.actions-cell{white-space:nowrap}
+    .history-link{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--primary);text-decoration:none}.history-link:hover{background:#dbeafe}.history-link svg{width:18px;height:18px}
+    .edit-dialog{width:min(720px,calc(100% - 32px));padding:24px;border:0;border-radius:16px;color:var(--text);box-shadow:0 18px 50px rgba(15,23,42,.25)}
+    .edit-dialog::backdrop{background:rgba(15,23,42,.55)}
+    .edit-dialog h2{margin:0 0 6px;color:var(--primary)}.edit-dialog p{margin:0 0 16px}
+    .edit-dialog .form-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.edit-dialog .field.full{grid-column:1/-1}
+    .field textarea{width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;font:inherit;resize:vertical}
+    .field input:focus,.field textarea:focus{outline:2px solid var(--primary);outline-offset:1px}
+    @media(max-width:520px){.edit-dialog .form-grid{grid-template-columns:1fr}}
+    .confirm-dialog{width:min(440px,calc(100% - 32px));padding:22px;border:0;border-radius:16px;color:var(--text);box-shadow:0 18px 50px rgba(15,23,42,.25)}
+    .confirm-dialog::backdrop{background:rgba(15,23,42,.55)}
+    .confirm-dialog h2{margin:0 0 10px;color:var(--danger)}
+    .confirm-dialog p{line-height:1.5}
+    .confirm-dialog form{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
+    @media(max-width:760px){.form-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:520px){body{padding:10px}.card{padding:15px}.form-grid{grid-template-columns:1fr}.header{align-items:stretch}.header .btn{width:100%}}
+  </style>
+  <link rel="stylesheet" href="app-shell.css">
+  <script src="app-navigation.js" defer></script>
+</head>
+<body>
+<main class="container">
+  <section class="card">
+    <div class="header">
+      <div><h1>Gestion de stock</h1><div class="muted">Consultez les articles, leurs quantités et leurs dates de péremption.</div></div>
+    </div>
+    <div id="authBar" class="toolbar" hidden>
+      <strong id="signedInAs"></strong>
+      <button id="logoutButton" class="btn light" type="button">Déconnexion</button>
+    </div>
+    <div id="loginForm" class="form-grid" style="margin-top:16px">
+      <div class="field"><label for="loginUsername">Utilisateur</label><input id="loginUsername" autocomplete="username"></div>
+      <div class="field"><label for="loginPassword">Mot de passe</label><input id="loginPassword" type="password" autocomplete="current-password"></div>
+      <button id="loginButton" class="btn" type="button">Connexion</button>
+    </div>
+    <div id="authStatus" class="status"></div>
+    <div id="pageStatus" class="status"></div>
+  </section>
+
+  <section id="stockFormCard" class="card" hidden>
+    <h2 id="formTitle">Ajouter un article</h2>
+    <form id="stockForm">
+      <input id="itemId" type="hidden">
+      <div class="form-grid">
+        <div class="field"><label for="denomination">Dénomination</label><input id="denomination" type="text" maxlength="255" required></div>
+        <div class="field"><label for="quantity">Quantité</label><input id="quantity" type="number" min="0" step="1" required></div>
+        <div class="field"><label for="entryDate">Date d’entrée</label><input id="entryDate" type="date" required></div>
+        <div class="field"><label for="codeBarres">Code-barres produit</label><input id="codeBarres" type="text" maxlength="255" autocomplete="off"></div>
+        <div class="field"><label for="numeroLot">Numéro de lot</label><input id="numeroLot" type="text" maxlength="255"></div>
+        <div class="field"><label for="expirationDate">Date de péremption</label><input id="expirationDate" type="date"></div>
+      </div>
+      <div class="actions" style="margin-top:14px"><button id="saveButton" class="btn" type="submit">Ajouter au stock</button><button id="cancelEdit" class="btn light" type="button" hidden>Annuler</button></div>
+    </form>
+    <div id="formStatus" class="status"></div>
+  </section>
+
+  <section class="card">
+    <div class="toolbar"><h2>Inventaire</h2><button id="refreshButton" class="btn secondary" type="button" disabled>Actualiser</button></div>
+    <div class="field filters"><label for="search">Rechercher un article</label><input id="search" type="search" placeholder="Dénomination, lot ou série..." disabled></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Dénomination</th><th>Quantité totale</th><th>Sous-entités QR</th><th>Code-barres produit</th><th>Date d’entrée</th><th>Numéro de lot</th><th>Date de péremption</th><th id="actionsHeader" hidden>Actions</th></tr></thead>
+        <tbody id="stockRows"></tbody>
+      </table>
+      <div id="emptyState" class="empty">Connectez-vous pour consulter le stock.</div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="toolbar"><h2>Sous-entités identifiées par QR Code</h2><button id="refreshQrUnits" class="btn secondary" type="button" disabled>Actualiser</button></div>
+    <p class="muted">Chaque QR correspond à une sous-entité unique de sa dénomination, avec ses informations de lot et de péremption. La quantité affichée est la quantité restante pour cette sous-entité.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Dénomination parente</th><th>Numéro de série QR</th><th>Quantité</th><th>Date d’entrée</th><th>Numéro de lot</th>        <th>Date de péremption</th><th>Commentaire</th><th>Créée par</th><th id="qrUnitActionsHeader" hidden>Actions</th></tr></thead>
+        <tbody id="qrUnitRows"></tbody>
+      </table>
+      <div id="qrUnitEmpty" class="empty">Aucune sous-entité QR enregistrée.</div>
+    </div>
+          </section>
+
+  <section id="withdrawalHistoryCard" class="card" hidden>
+    <div class="toolbar"><h2>Historique des sorties</h2><button id="refreshWithdrawals" class="btn secondary" type="button">Actualiser l’historique</button></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Date</th><th>Article</th><th>Quantité retirée</th><th>Patient</th><th>Utilisateur</th><th aria-label="Historique patient"></th></tr></thead>
+        <tbody id="withdrawalRows"></tbody>
+      </table>
+      <div id="withdrawalEmpty" class="empty">Aucune sortie enregistrée.</div>
+    </div>
+  </section>
+
+  <section id="qrAdditionHistoryCard" class="card" hidden>
+    <div class="toolbar"><h2>Historique des entrées par QR Code</h2><button id="refreshQrAdditions" class="btn secondary" type="button">Actualiser l’historique</button></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Date</th><th>Article</th><th>Numéro de série</th><th>Quantité ajoutée</th><th>Stock après lecture</th><th>Utilisateur</th></tr></thead>
+        <tbody id="qrAdditionRows"></tbody>
+      </table>
+      <div id="qrAdditionEmpty" class="empty">Aucune entrée par QR Code enregistrée.</div>
+    </div>
+  </section>
+</main>
+<dialog id="qrEditDialog" class="edit-dialog" aria-labelledby="qrEditTitle">
+  <form id="qrEditForm">
+    <h2 id="qrEditTitle">Modifier la sous-entité QR</h2>
+    <p id="qrEditParent" class="muted"></p>
+    <div class="form-grid">
+      <div class="field"><label for="qrEditSerial">Numéro de série</label><input id="qrEditSerial" type="text" required maxlength="255" autocomplete="off"></div>
+      <div class="field"><label for="qrEditEntry">Date d’entrée</label><input id="qrEditEntry" type="date"></div>
+      <div class="field"><label for="qrEditLot">Numéro de lot</label><input id="qrEditLot" type="text" maxlength="255"></div>
+      <div class="field"><label for="qrEditExpiration">Date de péremption</label><input id="qrEditExpiration" type="date"></div>
+      <div class="field full"><label for="qrEditComment">Commentaire</label><textarea id="qrEditComment" rows="4" maxlength="2000"></textarea></div>
+    </div>
+    <div id="qrEditStatus" class="status"></div>
+    <div class="actions" style="margin-top:16px;justify-content:flex-end">
+      <button id="qrEditCancel" class="btn light" type="button">Annuler</button>
+      <button id="qrEditSave" class="btn" type="submit">Enregistrer</button>
+    </div>
+  </form>
+</dialog>
+<dialog id="confirmDialog" class="confirm-dialog" aria-labelledby="confirmTitle" aria-describedby="confirmMessage">
+  <h2 id="confirmTitle">Confirmer la suppression</h2>
+  <p id="confirmMessage"></p>
+  <div class="actions">
+    <button id="cancelDelete" class="btn light" type="button">Annuler</button>
+    <button id="confirmDelete" class="btn danger" type="button">Supprimer</button>
+  </div>
+</dialog>
+<script src="auth.js"></script>
+<script src="gs1.js"></script>
+<script>
+'use strict';
+
+const API = `${window.AppAuth.API_BASE}/api/stock`;
+const $ = (id) => document.getElementById(id);
+let currentUser = window.AppAuth.user();
+let stockItems = [];
+let qrUnits = [];
+
+function showStatus(element, message, type='info') {
+  element.textContent = message;
+  element.className = `status ${type}`;
+}
+
+function confirmDeletion(message) {
+  const dialog = $('confirmDialog');
+  $('confirmMessage').textContent = message;
+  return new Promise((resolve) => {
+    $('cancelDelete').onclick = () => {
+      dialog.close();
+      resolve(false);
+    };
+    $('confirmDelete').onclick = () => {
+      dialog.close();
+      resolve(true);
+    };
+    dialog.addEventListener('cancel', () => resolve(false), { once: true });
+    dialog.showModal();
+  });
+}
+
+function dateValue(date) {
+  return date ? new Date(`${date}T00:00:00`).toLocaleDateString('fr-BE') : '—';
+}
+
+function localDateValue(date = new Date()) {
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+function resetForm() {
+  $('stockForm').reset();
+  $('itemId').value = '';
+  $('entryDate').value = localDateValue();
+  $('formTitle').textContent = 'Ajouter un article';
+  $('saveButton').textContent = 'Ajouter au stock';
+  $('cancelEdit').hidden = true;
+  $('formStatus').className = 'status';
+}
+
+function updateAuthState() {
+  const signedIn = Boolean(currentUser);
+  $('loginForm').hidden = signedIn;
+  $('authBar').hidden = !signedIn;
+  $('signedInAs').textContent = signedIn
+    ? `Connecté : ${currentUser.username} (${
+      currentUser.role === 'superadmin' ? 'SuperAdmin'
+        : currentUser.role === 'admin' ? 'administrateur' : 'utilisateur'
+    })`
+    : '';
+  const canManageStock = signedIn && ['admin', 'superadmin'].includes(currentUser.role);
+  $('stockFormCard').hidden = !canManageStock;
+  $('actionsHeader').hidden = !canManageStock;
+  $('withdrawalHistoryCard').hidden = !canManageStock;
+  $('qrAdditionHistoryCard').hidden = !canManageStock;
+  $('qrUnitActionsHeader').hidden = !canManageStock;
+  $('refreshButton').disabled = !signedIn;
+  $('refreshQrUnits').disabled = !signedIn;
+  $('search').disabled = !signedIn;
+  if (!signedIn) {
+    stockItems = [];
+    qrUnits = [];
+    renderStock();
+    $('qrUnitRows').replaceChildren();
+    $('qrUnitEmpty').hidden = false;
+    $('qrUnitEmpty').textContent = 'Connectez-vous pour consulter les sous-entités QR.';
+  }
+}
+
+async function login() {
+  $('loginButton').disabled = true;
+  try {
+    currentUser = await window.AppAuth.login($('loginUsername').value.trim(), $('loginPassword').value);
+    $('loginPassword').value = '';
+    updateAuthState();
+    showStatus($('authStatus'), 'Connexion réussie.', 'success');
+    await loadStock();
+  } catch (error) {
+    showStatus($('authStatus'), `Connexion impossible : ${error.message}`, 'error');
+  } finally {
+    $('loginButton').disabled = false;
+  }
+}
+
+function logout() {
+  window.AppAuth.logout();
+  currentUser = null;
+  updateAuthState();
+  showStatus($('authStatus'), 'Session fermée.', 'info');
+  $('pageStatus').className = 'status';
+}
+
+function renderStock() {
+  const query = $('search').value.trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const filtered = stockItems.filter((item) =>
+    [item.denomination, item.code_barres, item.numero_lot, ...qrUnits
+      .filter((unit) => unit.stock_item_id === item.id)
+      .map((unit) => unit.numero_serie)]
+      .join(' ').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().includes(query)
+  );
+  $('stockRows').replaceChildren();
+  $('emptyState').hidden = filtered.length > 0;
+  if (!filtered.length) {
+    $('emptyState').textContent = stockItems.length ? 'Aucun article ne correspond à la recherche.' : 'Aucun article en stock.';
+  }
+  filtered.forEach((item) => {
+    const row = document.createElement('tr');
+    const values = [
+      item.denomination,
+      item.quantity,
+      qrUnits.filter((unit) => unit.stock_item_id === item.id).length,
+      item.code_barres || '—',
+      dateValue(item.entry_date),
+      item.numero_lot || '—',
+    ];
+    values.forEach((value, index) => {
+      const cell = document.createElement('td');
+      cell.textContent = String(value);
+      if (index === 1) cell.className = 'quantity';
+      row.append(cell);
+    });
+    const expiryCell = document.createElement('td');
+    expiryCell.textContent = dateValue(item.expiration_date);
+    if (item.expiration_date && item.expiration_date < localDateValue()) {
+      expiryCell.className = 'expired';
+      expiryCell.title = 'Article périmé';
+    }
+    row.append(expiryCell);
+    if (['admin', 'superadmin'].includes(currentUser?.role)) {
+      const actionsCell = document.createElement('td');
+      actionsCell.className = 'actions-cell';
+      const actions = document.createElement('div');
+      actions.className = 'actions';
+      const editButton = document.createElement('button');
+      editButton.type = 'button';
+      editButton.className = 'btn secondary small';
+      editButton.textContent = 'Modifier';
+      editButton.addEventListener('click', () => editItem(item));
+      const deleteButton = document.createElement('button');
+      deleteButton.type = 'button';
+      deleteButton.className = 'btn danger small';
+      deleteButton.textContent = 'Supprimer';
+      deleteButton.addEventListener('click', () => deleteItem(item));
+      const duplicateButton = document.createElement('button');
+      duplicateButton.type = 'button';
+      duplicateButton.className = 'btn light small';
+      duplicateButton.textContent = 'Dupliquer';
+      duplicateButton.addEventListener('click', () => duplicateItem(item));
+      actions.append(editButton, duplicateButton, deleteButton);
+      actionsCell.append(actions);
+      row.append(actionsCell);
+    }
+    $('stockRows').append(row);
+  });
+}
+
+async function loadStock() {
+  if (!currentUser) return;
+  $('refreshButton').disabled = true;
+  showStatus($('pageStatus'), 'Chargement du stock...', 'info');
+  try {
+    const response = await fetch(API, {
+      cache: 'no-store',
+      headers: window.AppAuth.headers()
+    });
+    if (response.status === 401) {
+      logout();
+      throw new Error('Session expirée. Connectez-vous à nouveau.');
+    }
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    stockItems = await response.json();
+    renderStock();
+    showStatus($('pageStatus'), `${stockItems.length} article(s) en stock.`, 'success');
+    const historyLoads = ['admin', 'superadmin'].includes(currentUser?.role)
+      ? [loadWithdrawals(), loadQrAdditions()]
+      : [];
+    await Promise.all([loadQrUnits(), ...historyLoads]);
+  } catch (error) {
+    if (currentUser) showStatus($('pageStatus'), `Impossible de charger le stock : ${error.message}`, 'error');
+  } finally {
+    $('refreshButton').disabled = !currentUser;
+  }
+}
+
+function renderQrUnits() {
+  const query = $('search').value.trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const filteredUnits = qrUnits.filter((unit) =>
+    [unit.denomination, unit.numero_serie, unit.numero_lot, unit.commentaire]
+      .join(' ').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().includes(query)
+  );
+  $('qrUnitRows').replaceChildren();
+  $('qrUnitEmpty').hidden = filteredUnits.length > 0;
+  $('qrUnitEmpty').textContent = qrUnits.length
+    ? 'Aucune sous-entité QR ne correspond à la recherche.'
+    : 'Aucune sous-entité QR enregistrée.';
+  filteredUnits.forEach((unit) => {
+    const row = document.createElement('tr');
+    const values = [
+      unit.denomination,
+      unit.numero_serie,
+      unit.quantity,
+      dateValue(unit.entry_date),
+      unit.numero_lot || '—',
+      dateValue(unit.expiration_date),
+      unit.commentaire || '—',
+      unit.created_by
+    ];
+    values.forEach((value, index) => {
+      const cell = document.createElement('td');
+      cell.textContent = String(value);
+      if (index === 2) cell.className = 'quantity';
+      if (index === 5 && unit.expiration_date && unit.expiration_date < localDateValue()) {
+        cell.className = 'expired';
+        cell.title = 'Article périmé';
+      }
+      row.append(cell);
+    });
+    if (['admin', 'superadmin'].includes(currentUser?.role)) {
+      const actionsCell = document.createElement('td');
+      actionsCell.className = 'actions-cell';
+      const editButton = document.createElement('button');
+      editButton.type = 'button';
+      editButton.className = 'btn secondary small';
+      editButton.textContent = 'Modifier';
+      editButton.addEventListener('click', () => editQrUnit(unit));
+      const deleteButton = document.createElement('button');
+      deleteButton.type = 'button';
+      deleteButton.className = 'btn danger small';
+      deleteButton.textContent = 'Supprimer';
+      deleteButton.addEventListener('click', () => deleteQrUnit(unit));
+      actionsCell.append(editButton, deleteButton);
+      row.append(actionsCell);
+    }
+    $('qrUnitRows').append(row);
+  });
+}
+
+async function loadQrUnits() {
+  if (!currentUser) return;
+  try {
+    const response = await fetch(`${window.AppAuth.API_BASE}/api/stock/qr-units`, {
+      cache: 'no-store',
+      headers: window.AppAuth.headers()
+    });
+    if (response.status === 401) {
+      logout();
+      throw new Error('Session expirée. Connectez-vous à nouveau.');
+    }
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    qrUnits = await response.json();
+    renderQrUnits();
+    renderStock();
+  } catch (error) {
+    showStatus($('pageStatus'), `Impossible de charger les sous-entités QR : ${error.message}`, 'error');
+  }
+}
+
+async function loadWithdrawals() {
+  if (!['admin', 'superadmin'].includes(currentUser?.role)) return;
+  try {
+    const response = await fetch(`${window.AppAuth.API_BASE}/api/stock/withdrawals`, {
+      headers: window.AppAuth.headers()
+    });
+    if (response.status === 401) {
+      logout();
+      throw new Error('Session expirée. Connectez-vous à nouveau.');
+    }
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const withdrawals = await response.json();
+    $('withdrawalRows').replaceChildren();
+    $('withdrawalEmpty').hidden = withdrawals.length > 0;
+    withdrawals.forEach((withdrawal) => {
+      const row = document.createElement('tr');
+      [
+        new Date(withdrawal.withdrawn_at).toLocaleString('fr-BE'),
+        withdrawal.denomination,
+        withdrawal.quantity,
+        withdrawal.patient_name || '—',
+        withdrawal.withdrawn_by
+      ].forEach((value) => {
+        const cell = document.createElement('td');
+        cell.textContent = String(value);
+        row.append(cell);
+      });
+      const historyCell = document.createElement('td');
+      if (withdrawal.patient_id) {
+        const historyLink = document.createElement('a');
+        historyLink.className = 'history-link';
+        historyLink.href = `historique-patients.html?patient_id=${encodeURIComponent(withdrawal.patient_id)}`;
+        historyLink.title = `Voir l’historique de ${withdrawal.patient_name || 'ce patient'}`;
+        historyLink.setAttribute(
+          'aria-label',
+          `Voir l’historique de ${withdrawal.patient_name || 'ce patient'}`
+        );
+        historyLink.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path><path d="M3 3v5h5"></path><path d="M12 7v5l3 2"></path></svg>';
+        historyCell.append(historyLink);
+      } else {
+        historyCell.textContent = '—';
+      }
+      row.append(historyCell);
+      $('withdrawalRows').append(row);
+    });
+  } catch (error) {
+    showStatus($('pageStatus'), `Impossible de charger l’historique des sorties : ${error.message}`, 'error');
+  }
+}
+
+async function loadQrAdditions() {
+  if (!['admin', 'superadmin'].includes(currentUser?.role)) return;
+  try {
+    const response = await fetch(`${window.AppAuth.API_BASE}/api/stock/qr-additions`, {
+      headers: window.AppAuth.headers()
+    });
+    if (response.status === 401) {
+      logout();
+      throw new Error('Session expirée. Connectez-vous à nouveau.');
+    }
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const additions = await response.json();
+    $('qrAdditionRows').replaceChildren();
+    $('qrAdditionEmpty').hidden = additions.length > 0;
+    additions.forEach((addition) => {
+      const row = document.createElement('tr');
+      [
+        new Date(addition.added_at).toLocaleString('fr-BE'),
+        addition.denomination,
+        addition.numero_serie,
+        addition.quantity_added,
+        addition.quantity_after,
+        addition.added_by
+      ].forEach((value) => {
+        const cell = document.createElement('td');
+        cell.textContent = String(value);
+        row.append(cell);
+      });
+      $('qrAdditionRows').append(row);
+    });
+  } catch (error) {
+    showStatus($('pageStatus'), `Impossible de charger l’historique des entrées QR : ${error.message}`, 'error');
+  }
+}
+
+function editItem(item) {
+  $('itemId').value = item.id;
+  $('denomination').value = item.denomination;
+  $('quantity').value = item.quantity;
+  $('entryDate').value = item.entry_date;
+  $('codeBarres').value = item.code_barres || '';
+  $('numeroLot').value = item.numero_lot || '';
+  $('expirationDate').value = item.expiration_date || '';
+  $('formTitle').textContent = 'Modifier un article';
+  $('saveButton').textContent = 'Enregistrer les modifications';
+  $('cancelEdit').hidden = false;
+  $('stockFormCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function duplicateItem(item) {
+  if (!['admin', 'superadmin'].includes(currentUser?.role)) return;
+  resetForm();
+  $('denomination').value = item.denomination;
+  $('quantity').value = item.quantity;
+  $('numeroLot').value = item.numero_lot || '';
+  $('expirationDate').value = item.expiration_date || '';
+  // Le code-barres produit doit être unique : à saisir pour la copie.
+  $('formTitle').textContent = 'Dupliquer un article';
+  $('saveButton').textContent = 'Ajouter la copie au stock';
+  $('cancelEdit').hidden = false;
+  showStatus($('formStatus'), `Copie de « ${item.denomination} » : modifiez les champs puis enregistrez. Le code-barres produit doit être unique.`, 'info');
+  $('stockFormCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  $('denomination').focus();
+}
+
+async function saveItem(event) {
+  event.preventDefault();
+  if (!['admin', 'superadmin'].includes(currentUser?.role)) return;
+  const itemId = $('itemId').value;
+  const payload = {
+    denomination: $('denomination').value.trim(),
+    quantity: Number($('quantity').value),
+    entry_date: $('entryDate').value,
+    code_barres: $('codeBarres').value.trim() || null,
+    numero_lot: $('numeroLot').value.trim() || null,
+    expiration_date: $('expirationDate').value || null
+  };
+  $('saveButton').disabled = true;
+  try {
+    const response = await fetch(itemId ? `${API}/${itemId}` : API, {
+      method: itemId ? 'PATCH' : 'POST',
+      headers: window.AppAuth.headers({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(payload)
+    });
+    const result = await response.json();
+    if (response.status === 401) {
+      logout();
+      throw new Error('Session expirée. Connectez-vous à nouveau.');
+    }
+    if (!response.ok) throw new Error(result.detail || `HTTP ${response.status}`);
+    resetForm();
+    showStatus($('pageStatus'), itemId ? 'Article modifié.' : 'Article ajouté au stock.', 'success');
+    await loadStock();
+  } catch (error) {
+    showStatus($('formStatus'), `Enregistrement impossible : ${error.message}`, 'error');
+  } finally {
+    $('saveButton').disabled = false;
+  }
+}
+
+let editingQrUnit = null;
+
+function editQrUnit(unit) {
+  editingQrUnit = unit;
+  $('qrEditParent').textContent = `Article parent : ${unit.denomination}`;
+  $('qrEditSerial').value = unit.numero_serie;
+  $('qrEditEntry').value = unit.entry_date || '';
+  $('qrEditLot').value = unit.numero_lot || '';
+  $('qrEditExpiration').value = unit.expiration_date || '';
+  $('qrEditComment').value = unit.commentaire || '';
+  $('qrEditStatus').className = 'status';
+  $('qrEditDialog').showModal();
+}
+
+function closeQrEdit() {
+  editingQrUnit = null;
+  $('qrEditDialog').close();
+}
+
+$('qrEditCancel').addEventListener('click', closeQrEdit);
+
+$('qrEditForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!editingQrUnit) return;
+  const body = {
+    numero_serie: $('qrEditSerial').value.trim(),
+    entry_date: $('qrEditEntry').value || null,
+    numero_lot: $('qrEditLot').value.trim() || null,
+    expiration_date: $('qrEditExpiration').value || null,
+    commentaire: $('qrEditComment').value.trim() || null
+  };
+  $('qrEditSave').disabled = true;
+  try {
+    const response = await fetch(`${window.AppAuth.API_BASE}/api/stock/qr-units/${editingQrUnit.id}`, {
+      method: 'PATCH',
+      headers: window.AppAuth.headers({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(body)
+    });
+    const result = await response.json().catch(() => ({}));
+    if (response.status === 401) {
+      closeQrEdit();
+      logout();
+      throw new Error('Session expirée. Connectez-vous à nouveau.');
+    }
+    if (!response.ok) {
+      const detail = Array.isArray(result.detail)
+        ? result.detail.map((entry) => entry.msg).join(' ; ')
+        : result.detail;
+      throw new Error(detail || `HTTP ${response.status}`);
+    }
+    closeQrEdit();
+    showStatus($('pageStatus'), 'Sous-entité QR modifiée.', 'success');
+    await loadStock();
+  } catch (error) {
+    showStatus($('qrEditStatus'), `Modification impossible : ${error.message}`, 'error');
+  } finally {
+    $('qrEditSave').disabled = false;
+  }
+});
+
+async function deleteQrUnit(unit) {
+  if (!['admin', 'superadmin'].includes(currentUser?.role)) return;
+  const confirmed = await confirmDeletion(
+    `La sous-entité QR « ${unit.numero_serie} » de « ${unit.denomination} » sera supprimée. Sa quantité restante (${unit.quantity}) sera également retirée du stock.`
+  );
+  if (!confirmed) return;
+  try {
+    const response = await fetch(`${window.AppAuth.API_BASE}/api/stock/qr-units/${unit.id}`, {
+      method: 'DELETE',
+      headers: window.AppAuth.headers()
+    });
+    const result = await response.json();
+    if (response.status === 401) {
+      logout();
+      throw new Error('Session expirée. Connectez-vous à nouveau.');
+    }
+    if (!response.ok) throw new Error(result.detail || `HTTP ${response.status}`);
+    qrUnits = qrUnits.filter((currentUnit) => currentUnit.id !== unit.id);
+    const stockItem = stockItems.find((item) => item.id === unit.stock_item_id);
+    if (stockItem) stockItem.quantity = Math.max(0, stockItem.quantity - unit.quantity);
+    renderQrUnits();
+    renderStock();
+    showStatus(
+      $('pageStatus'),
+      `Sous-entité QR supprimée. ${unit.quantity} unité(s) retirée(s) du stock.`,
+      'success'
+    );
+    await loadStock();
+  } catch (error) {
+    showStatus($('pageStatus'), `Suppression impossible : ${error.message}`, 'error');
+  }
+}
+
+async function deleteItem(item) {
+  if (!['admin', 'superadmin'].includes(currentUser?.role)) return;
+  const qrUnitCount = qrUnits.filter((unit) => unit.stock_item_id === item.id).length;
+  if (qrUnitCount) {
+    window.alert(`« ${item.denomination} » contient ${qrUnitCount} sous-entité(s) QR. Supprimez-les d'abord dans le tableau dédié.`);
+    return;
+  }
+  if (!await confirmDeletion(`L’article « ${item.denomination} » sera définitivement supprimé du stock.`)) return;
+  try {
+    const response = await fetch(`${API}/${item.id}`, {
+      method: 'DELETE',
+      headers: window.AppAuth.headers()
+    });
+    if (response.status === 401) {
+      logout();
+      throw new Error('Session expirée. Connectez-vous à nouveau.');
+    }
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.detail || `HTTP ${response.status}`);
+    showStatus($('pageStatus'), 'Article supprimé du stock.', 'success');
+    await loadStock();
+  } catch (error) {
+    showStatus($('pageStatus'), `Suppression impossible : ${error.message}`, 'error');
+  }
+}
+
+$('loginButton').addEventListener('click', login);
+$('loginPassword').addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') login();
+});
+$('logoutButton').addEventListener('click', logout);
+$('refreshButton').addEventListener('click', loadStock);
+$('refreshQrUnits').addEventListener('click', loadQrUnits);
+$('refreshWithdrawals').addEventListener('click', loadWithdrawals);
+$('refreshQrAdditions').addEventListener('click', loadQrAdditions);
+$('search').addEventListener('input', () => {
+  renderStock();
+  renderQrUnits();
+});
+$('codeBarres').addEventListener('change', () => {
+  const gs1 = window.Gs1.parse($('codeBarres').value);
+  if (!window.Gs1.isGs1(gs1)) return;
+  if (gs1.gtin) $('codeBarres').value = gs1.gtin;
+  if (gs1.lot) $('numeroLot').value = gs1.lot;
+  if (gs1.expiration) $('expirationDate').value = gs1.expiration;
+});
+$('stockForm').addEventListener('submit', saveItem);
+$('cancelEdit').addEventListener('click', resetForm);
+
+async function initialize() {
+  $('entryDate').value = localDateValue();
+  if (!currentUser) {
+    updateAuthState();
+    showStatus($('authStatus'), 'Connectez-vous pour consulter le stock.', 'info');
+    return;
+  }
+  try {
+    const response = await fetch(`${window.AppAuth.API_BASE}/api/auth/me`, {
+      headers: window.AppAuth.headers()
+    });
+    if (!response.ok) throw new Error('Session invalide.');
+    currentUser = await response.json();
+    updateAuthState();
+    await loadStock();
+  } catch {
+    logout();
+    showStatus($('authStatus'), 'Votre session a expiré. Connectez-vous à nouveau.', 'error');
+  }
+}
+
+initialize();
+</script>
+</body>
+</html>

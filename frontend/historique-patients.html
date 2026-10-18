@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f4c81">
+  <title>Historique des délivrances aux patients</title>
+  <style>
+    :root{--primary:#0f4c81;--primary-dark:#0a365c;--bg:#eef2f7;--text:#1f2937;--muted:#64748b;--border:#dbe3ec}
+    *{box-sizing:border-box}body{margin:0;padding:16px;background:var(--bg);color:var(--text);font-family:Arial,sans-serif}
+    .container{max-width:1200px;margin:auto}.card{margin-bottom:16px;padding:20px;background:#fff;border-radius:16px;box-shadow:0 6px 22px rgba(15,76,129,.08)}
+    h1{margin:0 0 6px;color:var(--primary);font-size:28px}h2{margin:0 0 12px}.muted{color:var(--muted)}
+    .header,.toolbar,.actions,.auth-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.header,.toolbar,.auth-bar{justify-content:space-between}
+    .btn{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:10px 14px;border:0;border-radius:10px;background:var(--primary);color:#fff;font-weight:700;text-decoration:none;cursor:pointer}
+    .btn:hover{background:var(--primary-dark)}.btn.secondary{background:#475569}.btn.light{background:#fff;color:var(--text);border:1px solid var(--border)}.btn:disabled{opacity:.55;cursor:not-allowed}
+    .login-grid{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end;margin-top:16px}.field{min-width:0}.field label{display:block;margin:0 0 6px;font-size:14px;font-weight:700}
+    .field input{width:100%;min-height:44px;padding:10px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;font:inherit}
+    .filters{display:grid;grid-template-columns:minmax(240px,2fr) repeat(2,minmax(150px,1fr)) auto;gap:12px;align-items:end;margin-top:18px}
+    .status{display:none;margin-top:14px;padding:12px;border-radius:10px;line-height:1.4}.status.info{display:block;background:#dbeafe;color:#1e40af}.status.success{display:block;background:#dcfce7;color:#166534}.status.error{display:block;background:#fee2e2;color:#991b1b}
+    .table-wrap{overflow:auto;border:1px solid var(--border);border-radius:12px}table{width:100%;min-width:980px;border-collapse:collapse}th,td{padding:11px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:top}th{background:var(--primary);color:#fff;white-space:nowrap}
+    .empty{text-align:center;padding:30px;color:var(--muted)}.quantity{font-weight:700;color:var(--primary)}.code{overflow-wrap:anywhere}
+    .copy-url-button{width:40px;min-width:40px;padding:8px}.copy-url-button svg{width:18px;height:18px}
+    [hidden]{display:none!important}
+    @media(max-width:760px){.filters{grid-template-columns:1fr 1fr}.filters .search-field{grid-column:1/-1}.filters .btn{width:100%}}
+    @media(max-width:600px){body{padding:10px}.card{padding:15px}.header{align-items:stretch}.header .btn{width:100%}.login-grid{grid-template-columns:1fr}.login-grid .btn{width:100%}}
+  </style>
+  <link rel="stylesheet" href="app-shell.css">
+  <script src="app-navigation.js" defer></script>
+</head>
+<body>
+<main class="container">
+  <section class="card">
+    <div class="header">
+      <div><h1>Historique patient</h1><div class="muted">Consultez les produits délivrés à chaque patient et retrouvez les opérations par patient, produit, code ou date.</div></div>
+      <div class="actions"><a id="newDispenseLink" class="btn" href="delivrance.html">Nouvelle délivrance</a></div>
+    </div>
+    <div id="authBar" class="auth-bar" hidden>
+      <strong id="signedInAs"></strong>
+      <button id="logoutButton" class="btn light" type="button">Déconnexion</button>
+    </div>
+    <form id="loginForm" class="login-grid">
+      <div class="field"><label for="loginUsername">Utilisateur</label><input id="loginUsername" autocomplete="username" required></div>
+      <div class="field"><label for="loginPassword">Mot de passe</label><input id="loginPassword" type="password" autocomplete="current-password" required></div>
+      <button id="loginButton" class="btn" type="submit">Connexion</button>
+    </form>
+    <div id="authStatus" class="status" aria-live="polite"></div>
+  </section>
+
+  <section id="historyCard" class="card" hidden>
+    <div class="toolbar">
+      <h2 id="historyTitle">Délivrances enregistrées</h2>
+      <button id="refreshButton" class="btn secondary" type="button">Actualiser</button>
+    </div>
+    <div class="filters">
+      <div class="field search-field"><label for="searchInput">Rechercher</label><input id="searchInput" type="search" placeholder="Patient, produit, code/QR, médecin, salle ou utilisateur"></div>
+      <div class="field"><label for="dateFrom">Du</label><input id="dateFrom" type="date"></div>
+      <div class="field"><label for="dateTo">Au</label><input id="dateTo" type="date"></div>
+      <button id="clearFilters" class="btn light" type="button">Effacer les filtres</button>
+    </div>
+    <div id="historyStatus" class="status" aria-live="polite"></div>
+    <div class="table-wrap" style="margin-top:16px">
+      <table>
+        <thead><tr><th>Date de délivrance</th><th>Patient</th><th>Date de naissance</th><th>Produit</th><th>Quantité</th><th>Médecin</th><th>Salle</th><th>Code scanné</th><th>Numéro de série</th><th>Date de péremption</th><th>Délivré par</th><th>Raccourci</th></tr></thead>
+        <tbody id="historyRows"></tbody>
+      </table>
+      <div id="emptyState" class="empty" hidden>Aucune délivrance ne correspond à ces critères.</div>
+    </div>
+    <p id="resultCount" class="muted" aria-live="polite"></p>
+  </section>
+</main>
+<script src="auth.js"></script>
+<script>
+'use strict';
+
+const API = `${window.AppAuth.API_BASE}/api`;
+const $ = (id) => document.getElementById(id);
+let currentUser = window.AppAuth.user();
+let searchTimer = null;
+const requestedPatientId = new URLSearchParams(window.location.search).get('patient_id');
+const parsedPatientId = requestedPatientId && /^\d+$/.test(requestedPatientId)
+  ? Number(requestedPatientId)
+  : null;
+const selectedPatientId = Number.isSafeInteger(parsedPatientId) && parsedPatientId > 0
+  ? parsedPatientId
+  : null;
+if (selectedPatientId) {
+  const dispenseUrl = new URL('delivrance.html', window.location.href);
+  dispenseUrl.searchParams.set('patient_id', String(selectedPatientId));
+  $('newDispenseLink').href = dispenseUrl.href;
+}
+
+function showStatus(element, message, type='info') {
+  element.textContent = message;
+  element.className = `status ${type}`;
+}
+
+function updateAuthState() {
+  const signedIn = Boolean(currentUser);
+  $('loginForm').hidden = signedIn;
+  $('authBar').hidden = !signedIn;
+  $('historyCard').hidden = !signedIn;
+  $('signedInAs').textContent = signedIn
+    ? `Connecté : ${currentUser.username} (${
+      currentUser.role === 'superadmin' ? 'SuperAdmin'
+        : currentUser.role === 'admin' ? 'administrateur' : 'utilisateur'
+    })`
+    : '';
+}
+
+function formatDate(value) {
+  return value ? new Date(value).toLocaleString('fr-BE') : '—';
+}
+
+function formatBirthDate(value) {
+  return value ? new Date(`${value}T00:00:00`).toLocaleDateString('fr-BE') : '—';
+}
+
+async function copyPatientHistoryUrl(patientId, patientName) {
+  const url = new URL(window.location.href);
+  url.search = '';
+  url.hash = '';
+  url.searchParams.set('patient_id', String(patientId));
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(url.href);
+      showStatus($('historyStatus'), `URL du raccourci copiée pour ${patientName}.`, 'success');
+      return;
+    } catch {
+      // The browser may expose the Clipboard API but block it on an insecure origin.
+    }
+  }
+  const input = document.createElement('textarea');
+  input.value = url.href;
+  input.setAttribute('readonly', '');
+  input.style.position = 'fixed';
+  input.style.opacity = '0';
+  document.body.append(input);
+  let copied = false;
+  try {
+    input.select();
+    copied = document.execCommand('copy');
+  } catch (error) {
+    showStatus($('historyStatus'), `Impossible de copier l’URL : ${error.message}`, 'error');
+    return;
+  } finally {
+    input.remove();
+  }
+  if (copied) {
+    showStatus($('historyStatus'), `URL du raccourci copiée pour ${patientName}.`, 'success');
+  } else {
+    const error = new Error('Le navigateur ne permet pas la copie automatique.');
+    showStatus($('historyStatus'), `Impossible de copier l’URL : ${error.message}`, 'error');
+  }
+}
+
+function logout(message='Session fermée.') {
+  window.AppAuth.logout();
+  currentUser = null;
+  updateAuthState();
+  showStatus($('authStatus'), message, 'info');
+}
+
+function renderRows(entries) {
+  $('historyRows').replaceChildren();
+  $('emptyState').hidden = entries.length > 0;
+  entries.forEach((entry) => {
+    const row = document.createElement('tr');
+    const values = [
+      formatDate(entry.dispensed_at),
+      entry.patient_name,
+      formatBirthDate(entry.patient_date_naissance),
+      entry.denomination,
+      entry.quantity,
+      entry.medecin || '—',
+      entry.salle || '—',
+      entry.scanned_code,
+      entry.numero_serie || '—',
+      entry.expiration_date || '—',
+      entry.dispensed_by
+    ];
+    values.forEach((value, index) => {
+      const cell = document.createElement('td');
+      cell.textContent = String(value);
+      if (index === 4) cell.className = 'quantity';
+      if (index === 7 || index === 8) cell.className = 'code';
+      row.append(cell);
+    });
+    const shortcutCell = document.createElement('td');
+    const copyButton = document.createElement('button');
+    copyButton.className = 'btn light copy-url-button';
+    copyButton.type = 'button';
+    copyButton.title = `Copier l’URL de l’historique de ${entry.patient_name}`;
+    copyButton.setAttribute('aria-label', `Copier l’URL de l’historique de ${entry.patient_name}`);
+    copyButton.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="13" height="13" rx="2"></rect><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"></path></svg>';
+    copyButton.addEventListener('click', () =>
+      copyPatientHistoryUrl(entry.patient_id, entry.patient_name)
+    );
+    shortcutCell.append(copyButton);
+    row.append(shortcutCell);
+    $('historyRows').append(row);
+  });
+  $('resultCount').textContent = entries.length === 500
+    ? '500 résultats affichés au maximum. Affinez la recherche pour retrouver des délivrances plus anciennes.'
+    : `${entries.length} délivrance(s) trouvée(s).`;
+}
+
+async function loadHistory() {
+  if (!currentUser) return;
+  $('refreshButton').disabled = true;
+  showStatus($('historyStatus'), 'Recherche des délivrances...', 'info');
+  try {
+    const params = new URLSearchParams();
+    if (selectedPatientId) params.set('patient_id', String(selectedPatientId));
+    const query = $('searchInput').value.trim();
+    if (query) params.set('q', query);
+    if ($('dateFrom').value) params.set('date_from', $('dateFrom').value);
+    if ($('dateTo').value) params.set('date_to', $('dateTo').value);
+    const queryString = params.toString();
+    const response = await fetch(
+      `${API}/patient-dispensations${queryString ? `?${queryString}` : ''}`,
+      { headers: window.AppAuth.headers() }
+    );
+    const result = await response.json();
+    if (response.status === 401) {
+      logout('Session expirée. Connectez-vous à nouveau.');
+      throw new Error('Session expirée. Connectez-vous à nouveau.');
+    }
+    if (!response.ok) throw new Error(result.detail || `HTTP ${response.status}`);
+    renderRows(result);
+    showStatus(
+      $('historyStatus'),
+      selectedPatientId
+        ? `Historique du patient sélectionné : ${result.length} délivrance(s) affichée(s).`
+        : 'Historique actualisé.',
+      'success'
+    );
+  } catch (error) {
+    showStatus($('historyStatus'), `Impossible de charger l’historique : ${error.message}`, 'error');
+  } finally {
+    $('refreshButton').disabled = !currentUser;
+  }
+}
+
+function scheduleSearch() {
+  window.clearTimeout(searchTimer);
+  searchTimer = window.setTimeout(loadHistory, 300);
+}
+
+async function login(event) {
+  event.preventDefault();
+  $('loginButton').disabled = true;
+  try {
+    currentUser = await window.AppAuth.login($('loginUsername').value.trim(), $('loginPassword').value);
+    $('loginPassword').value = '';
+    updateAuthState();
+    showStatus($('authStatus'), 'Connexion réussie.', 'success');
+    await loadHistory();
+  } catch (error) {
+    showStatus($('authStatus'), `Connexion impossible : ${error.message}`, 'error');
+  } finally {
+    $('loginButton').disabled = false;
+  }
+}
+
+$('loginForm').addEventListener('submit', login);
+$('logoutButton').addEventListener('click', () => logout());
+$('refreshButton').addEventListener('click', loadHistory);
+$('searchInput').addEventListener('input', scheduleSearch);
+$('dateFrom').addEventListener('change', loadHistory);
+$('dateTo').addEventListener('change', loadHistory);
+$('clearFilters').addEventListener('click', () => {
+  $('searchInput').value = '';
+  $('dateFrom').value = '';
+  $('dateTo').value = '';
+  loadHistory();
+});
+
+async function initialize() {
+  updateAuthState();
+  if (!currentUser) {
+    showStatus(
+      $('authStatus'),
+      selectedPatientId
+        ? 'Connectez-vous pour consulter l’historique du patient sélectionné.'
+        : 'Connectez-vous pour consulter l’historique des patients.',
+      'info'
+    );
+    return;
+  }
+  try {
+    const response = await fetch(`${API}/auth/me`, { headers: window.AppAuth.headers() });
+    if (response.status === 401) {
+      logout('Session expirée. Connectez-vous à nouveau.');
+      return;
+    }
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    currentUser = await response.json();
+    updateAuthState();
+    await loadHistory();
+  } catch (error) {
+    showStatus($('authStatus'), `Impossible d’initialiser la page : ${error.message}`, 'error');
+  }
+}
+
+initialize();
+</script>
+</body>
+</html>

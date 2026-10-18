@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f4c81">
+  <title>Mise à jour du signalétique patient</title>
+  <style>
+    :root{--primary:#0f4c81;--primary-dark:#0a365c;--bg:#eef2f7;--text:#1f2937;--muted:#64748b;--border:#dbe3ec}
+    *{box-sizing:border-box}body{margin:0;padding:16px;background:var(--bg);color:var(--text);font-family:Arial,sans-serif}
+    .container{max-width:1200px;margin:auto}.card{margin-bottom:16px;padding:20px;background:#fff;border-radius:16px;box-shadow:0 6px 22px rgba(15,76,129,.08)}
+    h1{margin:0 0 6px;color:var(--primary);font-size:28px}h2{margin:0 0 12px}.muted{color:var(--muted)}
+    .header,.toolbar,.actions,.auth-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.header,.toolbar,.auth-bar{justify-content:space-between}
+    .btn{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:10px 14px;border:0;border-radius:10px;background:var(--primary);color:#fff;font-weight:700;text-decoration:none;cursor:pointer}
+    .btn:hover{background:var(--primary-dark)}.btn.secondary{background:#475569}.btn.light{background:#fff;color:var(--text);border:1px solid var(--border)}.btn:disabled{opacity:.55;cursor:not-allowed}
+    .login-grid{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end;margin-top:16px}
+    .field{min-width:0}.field label{display:block;margin:0 0 6px;font-size:14px;font-weight:700}
+    .field input,.field select{width:100%;min-height:44px;padding:10px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;font:inherit}
+    .form-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+    .status{display:none;margin-top:14px;padding:12px;border-radius:10px;line-height:1.4}.status.info{display:block;background:#dbeafe;color:#1e40af}.status.success{display:block;background:#dcfce7;color:#166534}.status.error{display:block;background:#fee2e2;color:#991b1b}
+    .table-wrap{overflow:auto;border:1px solid var(--border);border-radius:12px}table{width:100%;min-width:620px;border-collapse:collapse}th,td{padding:11px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:top}th{background:var(--primary);color:#fff;white-space:nowrap}
+    tbody tr{cursor:pointer}tbody tr:hover{background:#f1f5f9}tbody tr[aria-selected="true"]{background:#dbeafe}
+    .history-cell,.link-cell{text-align:center;white-space:nowrap}.history-link,.copy-history-link{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;padding:0;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--primary);cursor:pointer}.history-link:hover,.copy-history-link:hover{background:#dbeafe}.history-link svg,.copy-history-link svg{width:18px;height:18px}
+    .empty{text-align:center;padding:30px;color:var(--muted)}[hidden]{display:none!important}
+    @media(max-width:760px){.form-grid{grid-template-columns:1fr 1fr}}
+    @media(max-width:600px){body{padding:10px}.card{padding:15px}.header{align-items:stretch}.header .btn{width:100%}.login-grid,.form-grid{grid-template-columns:1fr}.login-grid .btn{width:100%}}
+  </style>
+  <link rel="stylesheet" href="app-shell.css">
+  <script src="app-navigation.js" defer></script>
+</head>
+<body>
+<main class="container">
+  <section class="card">
+    <div class="header">
+      <div><h1>Fiche patient</h1><div class="muted">Recherchez un patient et mettez à jour son nom, prénom ou sa date de naissance.</div></div>
+    </div>
+    <div id="authBar" class="auth-bar" hidden>
+      <strong id="signedInAs"></strong>
+      <button id="logoutButton" class="btn light" type="button">Déconnexion</button>
+    </div>
+    <form id="loginForm" class="login-grid">
+      <div class="field"><label for="loginUsername">Utilisateur</label><input id="loginUsername" autocomplete="username" required></div>
+      <div class="field"><label for="loginPassword">Mot de passe</label><input id="loginPassword" type="password" autocomplete="current-password" required></div>
+      <button id="loginButton" class="btn" type="submit">Connexion</button>
+    </form>
+    <div id="authStatus" class="status" aria-live="polite"></div>
+  </section>
+
+  <section id="patientsCard" class="card" hidden>
+    <div class="toolbar">
+      <h2>Patients enregistrés</h2>
+      <button id="refreshButton" class="btn secondary" type="button">Actualiser</button>
+    </div>
+    <div class="field" style="margin:16px 0">
+      <label for="searchInput">Rechercher un patient</label>
+      <input id="searchInput" type="search" placeholder="Nom, prénom ou date de naissance">
+    </div>
+    <div id="listStatus" class="status" aria-live="polite"></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Prénom</th><th>Nom</th><th>Date de naissance</th><th class="history-cell">Historique</th><th class="link-cell">Lien</th></tr></thead>
+        <tbody id="patientRows"></tbody>
+      </table>
+      <div id="emptyState" class="empty" hidden>Aucun patient ne correspond à la recherche.</div>
+    </div>
+  </section>
+
+  <section id="editCard" class="card" hidden>
+    <h2>Modifier la fiche</h2>
+    <p id="selectedPatientSummary" class="muted"></p>
+    <form id="patientForm">
+      <div class="form-grid">
+        <div class="field"><label for="firstName">Prénom</label><input id="firstName" type="text" maxlength="255" autocomplete="given-name" required></div>
+        <div class="field"><label for="lastName">Nom</label><input id="lastName" type="text" maxlength="255" autocomplete="family-name" required></div>
+        <div class="field"><label for="birthDate">Date de naissance</label><input id="birthDate" type="date" required></div>
+      </div>
+      <div class="actions" style="margin-top:14px">
+        <button id="saveButton" class="btn" type="submit">Enregistrer les modifications</button>
+        <button id="cancelButton" class="btn light" type="button">Annuler</button>
+      </div>
+    </form>
+    <div id="formStatus" class="status" aria-live="polite"></div>
+  </section>
+</main>
+<script src="auth.js"></script>
+<script>
+'use strict';
+
+const API = `${window.AppAuth.API_BASE}/api`;
+const $ = (id) => document.getElementById(id);
+let currentUser = window.AppAuth.user();
+let patients = [];
+let selectedPatient = null;
+
+function showStatus(element, message, type='info') {
+  element.textContent = message;
+  element.className = `status ${type}`;
+}
+
+function normalize(value) {
+  return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+}
+
+function formatDate(value) {
+  return value ? new Date(`${value}T00:00:00`).toLocaleDateString('fr-BE') : '—';
+}
+
+async function copyPatientHistoryUrl(patient) {
+  const url = new URL('historique-patients.html', window.location.href);
+  url.searchParams.set('patient_id', String(patient.id));
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(url.href);
+      showStatus($('listStatus'), `Lien vers l’historique de ${patient.prenom} ${patient.nom} copié.`, 'success');
+      return;
+    } catch {
+      // Fall back when the Clipboard API is blocked on an insecure origin.
+    }
+  }
+  const input = document.createElement('textarea');
+  input.value = url.href;
+  input.setAttribute('readonly', '');
+  input.style.position = 'fixed';
+  input.style.opacity = '0';
+  document.body.append(input);
+  let copied = false;
+  try {
+    input.select();
+    copied = document.execCommand('copy');
+  } catch (error) {
+    showStatus($('listStatus'), `Impossible de copier le lien : ${error.message}`, 'error');
+    return;
+  } finally {
+    input.remove();
+  }
+  showStatus(
+    $('listStatus'),
+    copied
+      ? `Lien vers l’historique de ${patient.prenom} ${patient.nom} copié.`
+      : 'Impossible de copier le lien : le navigateur refuse la copie.',
+    copied ? 'success' : 'error'
+  );
+}
+
+function updateAuthState() {
+  const signedIn = Boolean(currentUser);
+  $('loginForm').hidden = signedIn;
+  $('authBar').hidden = !signedIn;
+  $('patientsCard').hidden = !signedIn;
+  if (!signedIn) $('editCard').hidden = true;
+  $('signedInAs').textContent = signedIn
+    ? `Connecté : ${currentUser.username} (${
+      currentUser.role === 'superadmin' ? 'SuperAdmin'
+        : currentUser.role === 'admin' ? 'administrateur' : 'utilisateur'
+    })`
+    : '';
+}
+
+function renderPatients() {
+  const query = normalize($('searchInput').value.trim());
+  const matches = patients.filter((patient) =>
+    normalize(`${patient.prenom} ${patient.nom} ${patient.date_naissance}`).includes(query)
+  );
+  $('patientRows').replaceChildren();
+  $('emptyState').hidden = matches.length > 0;
+  $('emptyState').textContent = patients.length
+    ? 'Aucun patient ne correspond à la recherche.'
+    : 'Aucun patient enregistré.';
+  for (const patient of matches) {
+    const row = document.createElement('tr');
+    row.dataset.patientId = String(patient.id);
+    row.setAttribute('aria-selected', String(selectedPatient?.id === patient.id));
+    const firstNameCell = document.createElement('td');
+    firstNameCell.textContent = patient.prenom;
+    row.append(firstNameCell);
+    [patient.nom, formatDate(patient.date_naissance)].forEach((value) => {
+      const cell = document.createElement('td');
+      cell.textContent = value;
+      row.append(cell);
+    });
+    const historyCell = document.createElement('td');
+    historyCell.className = 'history-cell';
+    const historyLink = document.createElement('a');
+    historyLink.className = 'history-link';
+    historyLink.href = `historique-patients.html?patient_id=${encodeURIComponent(patient.id)}`;
+    historyLink.title = `Voir l’historique de ${patient.prenom} ${patient.nom}`;
+    historyLink.setAttribute('aria-label', `Voir l’historique de ${patient.prenom} ${patient.nom}`);
+    historyLink.addEventListener('click', (event) => event.stopPropagation());
+    historyLink.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"></path><path d="M3 3v5h5"></path><path d="M12 7v5l3 2"></path></svg>';
+    historyCell.append(historyLink);
+    row.append(historyCell);
+    const linkCell = document.createElement('td');
+    linkCell.className = 'link-cell';
+    const copyLink = document.createElement('button');
+    copyLink.className = 'copy-history-link';
+    copyLink.type = 'button';
+    copyLink.title = `Copier le lien vers l’historique de ${patient.prenom} ${patient.nom}`;
+    copyLink.setAttribute('aria-label', copyLink.title);
+    copyLink.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="13" height="13" rx="2"></rect><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"></path></svg>';
+    copyLink.addEventListener('click', (event) => {
+      event.stopPropagation();
+      copyPatientHistoryUrl(patient);
+    });
+    linkCell.append(copyLink);
+    row.append(linkCell);
+    row.addEventListener('click', () => selectPatient(patient));
+    $('patientRows').append(row);
+  }
+}
+
+function selectPatient(patient) {
+  selectedPatient = patient;
+  $('firstName').value = patient.prenom;
+  $('lastName').value = patient.nom;
+  $('birthDate').value = patient.date_naissance;
+  $('selectedPatientSummary').textContent =
+    `Patient #${patient.id} — fiche créée le ${formatDate(patient.created_at.slice(0, 10))}.`;
+  $('editCard').hidden = false;
+  $('formStatus').className = 'status';
+  renderPatients();
+}
+
+async function loadPatients() {
+  if (!currentUser) return;
+  $('refreshButton').disabled = true;
+  showStatus($('listStatus'), 'Chargement des patients...', 'info');
+  try {
+    const response = await fetch(`${API}/patients`, { headers: window.AppAuth.headers() });
+    const result = await response.json();
+    if (response.status === 401) {
+      logout('Session expirée. Connectez-vous à nouveau.');
+      throw new Error('Session expirée. Connectez-vous à nouveau.');
+    }
+    if (!response.ok) throw new Error(result.detail || `HTTP ${response.status}`);
+    patients = result;
+    if (selectedPatient) {
+      selectedPatient = patients.find((patient) => patient.id === selectedPatient.id) || null;
+      if (selectedPatient) selectPatient(selectedPatient);
+      else $('editCard').hidden = true;
+    }
+    renderPatients();
+    showStatus($('listStatus'), `${patients.length} patient(s) enregistré(s).`, 'success');
+  } catch (error) {
+    showStatus($('listStatus'), `Impossible de charger les patients : ${error.message}`, 'error');
+  } finally {
+    $('refreshButton').disabled = !currentUser;
+  }
+}
+
+async function savePatient(event) {
+  event.preventDefault();
+  if (!currentUser || !selectedPatient) return;
+  const today = new Date();
+  const todayValue = [
+    today.getFullYear(),
+    String(today.getMonth() + 1).padStart(2, '0'),
+    String(today.getDate()).padStart(2, '0')
+  ].join('-');
+  if ($('birthDate').value > todayValue) {
+    showStatus($('formStatus'), 'La date de naissance ne peut pas être dans le futur.', 'error');
+    return;
+  }
+  $('saveButton').disabled = true;
+  try {
+    const response = await fetch(`${API}/patients/${selectedPatient.id}`, {
+      method: 'PATCH',
+      headers: window.AppAuth.headers({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        prenom: $('firstName').value.trim(),
+        nom: $('lastName').value.trim(),
+        date_naissance: $('birthDate').value
+      })
+    });
+    if (response.status === 404) {
+      throw new Error(
+        'La version active de l’API ne possède pas la route de mise à jour patient. Redémarrez FastAPI depuis le dossier backend puis rechargez cette page.'
+      );
+    }
+    const result = await response.json();
+    if (response.status === 401) {
+      logout('Session expirée. Connectez-vous à nouveau.');
+      throw new Error('Session expirée. Connectez-vous à nouveau.');
+    }
+    if (!response.ok) throw new Error(result.detail || `HTTP ${response.status}`);
+    selectedPatient = result;
+    patients = patients.map((patient) => patient.id === result.id ? result : patient);
+    selectPatient(result);
+    showStatus($('formStatus'), 'Fiche patient mise à jour.', 'success');
+    showStatus($('listStatus'), 'Les informations du patient ont été mises à jour.', 'success');
+  } catch (error) {
+    showStatus($('formStatus'), `Mise à jour impossible : ${error.message}`, 'error');
+  } finally {
+    $('saveButton').disabled = false;
+  }
+}
+
+function logout(message='Session fermée.') {
+  window.AppAuth.logout();
+  currentUser = null;
+  selectedPatient = null;
+  updateAuthState();
+  showStatus($('authStatus'), message, 'info');
+}
+
+async function login(event) {
+  event.preventDefault();
+  $('loginButton').disabled = true;
+  try {
+    currentUser = await window.AppAuth.login($('loginUsername').value.trim(), $('loginPassword').value);
+    $('loginPassword').value = '';
+    updateAuthState();
+    showStatus($('authStatus'), 'Connexion réussie.', 'success');
+    await loadPatients();
+  } catch (error) {
+    showStatus($('authStatus'), `Connexion impossible : ${error.message}`, 'error');
+  } finally {
+    $('loginButton').disabled = false;
+  }
+}
+
+$('loginForm').addEventListener('submit', login);
+$('logoutButton').addEventListener('click', () => logout());
+$('refreshButton').addEventListener('click', loadPatients);
+$('searchInput').addEventListener('input', renderPatients);
+$('patientForm').addEventListener('submit', savePatient);
+$('cancelButton').addEventListener('click', () => {
+  selectedPatient = null;
+  $('editCard').hidden = true;
+  renderPatients();
+});
+
+async function initialize() {
+  const today = new Date();
+  $('birthDate').max = [
+    today.getFullYear(),
+    String(today.getMonth() + 1).padStart(2, '0'),
+    String(today.getDate()).padStart(2, '0')
+  ].join('-');
+  updateAuthState();
+  if (!currentUser) {
+    showStatus($('authStatus'), 'Connectez-vous pour consulter et modifier les fiches patients.', 'info');
+    return;
+  }
+  try {
+    const response = await fetch(`${API}/auth/me`, { headers: window.AppAuth.headers() });
+    if (response.status === 401) {
+      logout('Session expirée. Connectez-vous à nouveau.');
+      return;
+    }
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    currentUser = await response.json();
+    updateAuthState();
+    await loadPatients();
+  } catch (error) {
+    showStatus($('authStatus'), `Impossible d’initialiser la page : ${error.message}`, 'error');
+  }
+}
+
+initialize();
+</script>
+</body>
+</html>

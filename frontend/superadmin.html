@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f4c81">
+  <title>Journal SuperAdmin</title>
+  <style>
+    :root{--primary:#0f4c81;--bg:#eef2f7;--text:#1f2937;--muted:#64748b;--border:#dbe3ec}
+    *{box-sizing:border-box}
+    body{margin:0;padding:18px;background:var(--bg);color:var(--text);font-family:Arial,sans-serif}
+    main{max-width:1200px;margin:auto}
+    .card{margin-bottom:16px;padding:20px;border-radius:16px;background:#fff;box-shadow:0 6px 22px rgba(15,76,129,.08)}
+    h1{margin:0 0 8px;color:var(--primary)}h2{margin:0}
+    .muted{color:var(--muted)}
+    .header,.actions,.pagination{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+    .actions{justify-content:flex-start}
+    .btn{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:9px 13px;border:0;border-radius:9px;background:var(--primary);color:#fff;text-decoration:none;font-weight:700;cursor:pointer}
+    .btn.secondary{background:#475569}.btn:disabled{opacity:.55;cursor:not-allowed}
+    .login{display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:end;max-width:760px;margin-top:18px}
+    label{display:block;margin-bottom:6px;font-weight:700}
+    input{width:100%;min-height:42px;padding:9px;border:1px solid #cbd5e1;border-radius:9px;font:inherit}
+    .status{margin:12px 0 0;padding:12px;border-radius:9px;line-height:1.45}
+    .status:empty{display:none}.status.info{background:#dbeafe;color:#1e40af}.status.success{background:#dcfce7;color:#166534}.status.error{background:#fee2e2;color:#991b1b}
+    .event-list{display:grid;gap:12px;margin-top:16px}
+    .event{padding:14px;border:1px solid var(--border);border-radius:10px;background:#f8fafc}
+    .meta{margin-bottom:10px;color:#475569;font-size:14px;font-weight:700}
+    .event-data{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    pre{max-height:260px;overflow:auto;margin:0;padding:12px;border:1px solid var(--border);border-radius:8px;background:#fff;white-space:pre-wrap;overflow-wrap:anywhere}
+    .pagination{justify-content:flex-end;margin-top:16px}.pagination span{margin-right:auto;color:var(--muted)}
+    [hidden]{display:none!important}
+    @media(max-width:650px){body{padding:10px}.card{padding:15px}.login,.event-data{grid-template-columns:1fr}.login button{width:100%}.header{align-items:flex-start;flex-direction:column}.pagination{justify-content:center}.pagination span{width:100%;text-align:center}}
+  </style>
+  <link rel="stylesheet" href="app-shell.css">
+  <script src="app-navigation.js" defer></script>
+</head>
+<body>
+  <main>
+    <section class="card">
+      <div class="header">
+        <div>
+          <h1>Journal d’audit — SuperAdmin</h1>
+          <div class="muted">Journal complet des créations, modifications et suppressions. Conservation sans expiration.</div>
+        </div>
+        <div class="actions">
+          <button id="logoutButton" class="btn secondary" type="button" hidden>Déconnexion</button>
+        </div>
+      </div>
+      <form id="loginForm" class="login">
+        <div>
+          <label for="username">Compte SuperAdmin</label>
+          <input id="username" autocomplete="username" required>
+        </div>
+        <div>
+          <label for="password">Mot de passe</label>
+          <input id="password" type="password" autocomplete="current-password" required>
+        </div>
+        <button id="loginButton" class="btn" type="submit">Connexion</button>
+      </form>
+      <p id="authStatus" class="status" role="status" aria-live="polite"></p>
+    </section>
+
+    <section id="auditPanel" class="card" hidden>
+      <div class="header">
+        <div>
+          <h2>Événements enregistrés</h2>
+          <div id="pageSummary" class="muted"></div>
+        </div>
+        <button id="refreshButton" class="btn secondary" type="button">Actualiser</button>
+      </div>
+      <div id="eventList" class="event-list"></div>
+      <div class="pagination">
+        <span id="pageInfo"></span>
+        <button id="previousButton" class="btn secondary" type="button">Précédent</button>
+        <button id="nextButton" class="btn secondary" type="button">Suivant</button>
+      </div>
+      <p id="auditStatus" class="status" role="status" aria-live="polite"></p>
+    </section>
+  </main>
+  <script src="auth.js"></script>
+  <script>
+    'use strict';
+
+    const API_BASE = window.AppAuth.API_BASE;
+    const pageSize = 100;
+    let currentUser = window.AppAuth.user();
+    let currentOffset = 0;
+    let eventTotal = 0;
+    const $ = (id) => document.getElementById(id);
+
+    function showStatus(element, message, type) {
+      element.textContent = message;
+      element.className = `status ${type}`;
+    }
+
+    function renderAuth() {
+      const isSuperadmin = currentUser?.role === 'superadmin';
+      $('loginForm').hidden = Boolean(currentUser);
+      $('logoutButton').hidden = !currentUser;
+      $('auditPanel').hidden = !isSuperadmin;
+      if (isSuperadmin) {
+        showStatus($('authStatus'), `Connecté en tant que SuperAdmin : ${currentUser.username}`, 'success');
+      } else if (currentUser) {
+        showStatus($('authStatus'), 'Accès réservé au compte SuperAdmin. Déconnectez-vous pour changer de compte.', 'error');
+      } else {
+        showStatus($('authStatus'), 'Connectez-vous avec les identifiants SuperAdmin configurés au démarrage de l’API.', 'info');
+      }
+    }
+
+    async function loadAudit() {
+      if (currentUser?.role !== 'superadmin') return;
+      $('refreshButton').disabled = true;
+      $('eventList').textContent = 'Chargement du journal...';
+      try {
+        const response = await fetch(
+          `${API_BASE}/api/superadmin/audit?offset=${currentOffset}&limit=${pageSize}`,
+          { headers: window.AppAuth.headers() }
+        );
+        if (response.status === 401) {
+          logout('Session expirée. Reconnectez-vous.');
+          return;
+        }
+        if (!response.ok) {
+          const result = await response.json();
+          throw new Error(result.detail || `HTTP ${response.status}`);
+        }
+        const result = await response.json();
+        eventTotal = result.total;
+        $('pageSummary').textContent = `${eventTotal} événement(s) au total.`;
+        $('eventList').replaceChildren();
+        result.items.forEach((entry) => {
+          const article = document.createElement('article');
+          article.className = 'event';
+          const meta = document.createElement('div');
+          meta.className = 'meta';
+          meta.textContent = `${new Date(entry.changed_at).toLocaleString('fr-BE')} · ${entry.changed_by} · ${entry.action} · ${entry.entity_type} #${entry.entity_id}`;
+          const data = document.createElement('div');
+          data.className = 'event-data';
+          const before = document.createElement('pre');
+          before.textContent = entry.before_data
+            ? `Avant :\n${JSON.stringify(JSON.parse(entry.before_data), null, 2)}`
+            : 'Avant : aucun (création)';
+          const after = document.createElement('pre');
+          after.textContent = entry.after_data
+            ? `Après :\n${JSON.stringify(JSON.parse(entry.after_data), null, 2)}`
+            : 'Après : supprimé';
+          data.append(before, after);
+          article.append(meta, data);
+          $('eventList').append(article);
+        });
+        if (!result.items.length) {
+          $('eventList').textContent = 'Aucun événement enregistré.';
+        }
+        const first = eventTotal ? currentOffset + 1 : 0;
+        const last = Math.min(currentOffset + result.items.length, eventTotal);
+        $('pageInfo').textContent = `${first}–${last} sur ${eventTotal}`;
+        $('previousButton').disabled = currentOffset === 0;
+        $('nextButton').disabled = currentOffset + pageSize >= eventTotal;
+        $('auditStatus').textContent = '';
+        $('auditStatus').className = 'status';
+      } catch (error) {
+        $('eventList').textContent = 'Le journal n’a pas pu être chargé.';
+        showStatus($('auditStatus'), `Erreur de chargement : ${error.message}`, 'error');
+      } finally {
+        $('refreshButton').disabled = false;
+      }
+    }
+
+    async function login(event) {
+      event.preventDefault();
+      $('loginButton').disabled = true;
+      try {
+        currentUser = await window.AppAuth.login($('username').value.trim(), $('password').value);
+        $('password').value = '';
+        if (currentUser.role !== 'superadmin') {
+          window.AppAuth.logout();
+          currentUser = null;
+          renderAuth();
+          showStatus($('authStatus'), 'Ce journal est réservé au compte SuperAdmin.', 'error');
+          return;
+        }
+        renderAuth();
+        currentOffset = 0;
+        await loadAudit();
+      } catch (error) {
+        showStatus($('authStatus'), `Connexion impossible : ${error.message}`, 'error');
+      } finally {
+        $('loginButton').disabled = false;
+      }
+    }
+
+    function logout(message = 'Session fermée.') {
+      window.AppAuth.logout();
+      currentUser = null;
+      currentOffset = 0;
+      eventTotal = 0;
+      $('eventList').replaceChildren();
+      $('pageSummary').textContent = '';
+      $('pageInfo').textContent = '';
+      renderAuth();
+      showStatus($('authStatus'), message, message.includes('expirée') ? 'error' : 'info');
+    }
+
+    $('loginForm').addEventListener('submit', login);
+    $('logoutButton').addEventListener('click', () => logout());
+    $('refreshButton').addEventListener('click', loadAudit);
+    $('previousButton').addEventListener('click', () => {
+      currentOffset = Math.max(0, currentOffset - pageSize);
+      loadAudit();
+    });
+    $('nextButton').addEventListener('click', () => {
+      if (currentOffset + pageSize < eventTotal) {
+        currentOffset += pageSize;
+        loadAudit();
+      }
+    });
+
+    renderAuth();
+    if (currentUser?.role === 'superadmin') loadAudit();
+  </script>
+</body>
+</html>

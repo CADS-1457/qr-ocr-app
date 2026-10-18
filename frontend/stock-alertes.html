@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f4c81">
+  <title>Alertes et seuils de stock</title>
+  <style>
+    :root{--primary:#0f4c81;--bg:#eef2f7;--text:#1f2937;--muted:#64748b;--border:#dbe3ec;--green:#15803d;--orange:#c2410c;--red:#b91c1c}
+    *{box-sizing:border-box}body{margin:0;padding:16px;background:var(--bg);color:var(--text);font-family:Arial,sans-serif}
+    main{max-width:1200px;margin:auto}.card{margin-bottom:16px;padding:20px;background:#fff;border-radius:16px;box-shadow:0 6px 22px rgba(15,76,129,.08)}
+    h1{margin:0 0 6px;color:var(--primary);font-size:28px}h2{margin:0}.muted{color:var(--muted);line-height:1.5}
+    .toolbar,.actions{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}.actions{justify-content:flex-start}
+    .btn{display:inline-flex;align-items:center;justify-content:center;min-height:40px;padding:9px 13px;border:0;border-radius:10px;background:var(--primary);color:#fff;font-weight:700;text-decoration:none;cursor:pointer}
+    .btn.secondary{background:#475569}.btn:disabled{opacity:.55;cursor:wait}
+    .login-grid{display:grid;grid-template-columns:1fr 1fr auto;align-items:end;gap:12px;margin-top:16px}.login-grid[hidden],.account-bar[hidden],.admin-col[hidden]{display:none}
+    label{display:block;margin-bottom:6px;font-weight:700}.field{min-width:0}.field input{width:100%;min-height:42px;padding:9px;border:1px solid #cbd5e1;border-radius:9px;font:inherit}
+    .status{display:none;margin-top:12px;padding:12px;border-radius:10px;line-height:1.4}.status.info,.status.success,.status.error{display:block}.status.info{background:#dbeafe;color:#1e40af}.status.success{background:#dcfce7;color:#166534}.status.error{background:#fee2e2;color:#991b1b}
+    .account-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:14px}
+    .summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.summary-card{padding:16px;border:1px solid var(--border);border-radius:12px;background:#fff}.summary-card strong{display:block;font-size:28px}.summary-card span{color:var(--muted)}
+    .summary-card.red strong{color:var(--red)}.summary-card.orange strong{color:var(--orange)}.summary-card.green strong{color:var(--green)}
+    .alert-banner{margin-top:14px;padding:14px;border-radius:10px;font-weight:700;line-height:1.4}.alert-banner[hidden]{display:none}.alert-banner.red{background:#fee2e2;color:#991b1b}.alert-banner.orange{background:#ffedd5;color:#9a3412}.alert-banner.green{background:#dcfce7;color:#166534}
+    .filters{max-width:440px;margin:14px 0}.table-wrap{overflow:auto;border:1px solid var(--border);border-radius:12px}table{width:100%;min-width:760px;border-collapse:collapse}th,td{padding:12px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:middle}th{background:var(--primary);color:#fff;white-space:nowrap}
+    .quantity{font-weight:700}.gauge-wrap{min-width:150px}.gauge{height:12px;overflow:hidden;border-radius:999px;background:#e2e8f0}.gauge-fill{height:100%;min-width:0;border-radius:inherit;transition:width .2s}.gauge-fill.green{background:var(--green)}.gauge-fill.orange{background:#f97316}.gauge-fill.red{background:var(--red)}
+    .level{display:block;margin-top:5px;font-size:13px;font-weight:700}.level.green{color:var(--green)}.level.orange{color:var(--orange)}.level.red{color:var(--red)}.level.neutral{color:var(--muted)}
+    .threshold-input{width:90px;min-height:38px;padding:7px;border:1px solid #cbd5e1;border-radius:8px;font:inherit}.save-threshold{min-height:36px;margin-left:5px;padding:7px 10px;border:0;border-radius:8px;background:var(--primary);color:#fff;font-weight:700;cursor:pointer}.save-threshold:disabled{opacity:.55;cursor:wait}
+    .empty{padding:28px;text-align:center;color:var(--muted)}
+    @media(max-width:650px){body{padding:10px}.card{padding:15px}.toolbar{align-items:stretch}.toolbar .actions,.toolbar .btn{width:100%}.login-grid{grid-template-columns:1fr}.summary{grid-template-columns:1fr}.account-bar{align-items:stretch;flex-direction:column}}
+  </style>
+  <link rel="stylesheet" href="app-shell.css">
+  <script src="app-navigation.js" defer></script>
+</head>
+<body>
+<main>
+  <section class="card">
+    <div class="toolbar">
+      <div><h1>Alertes et seuils de stock</h1><p class="muted">Le stock passe au rouge au seuil minimum défini ; la zone orange signale un niveau inférieur ou égal à deux fois ce seuil.</p></div>
+    </div>
+    <form id="loginForm" class="login-grid">
+      <div class="field"><label for="loginUsername">Utilisateur</label><input id="loginUsername" autocomplete="username" required></div>
+      <div class="field"><label for="loginPassword">Mot de passe</label><input id="loginPassword" type="password" autocomplete="current-password" required></div>
+      <button id="loginButton" class="btn" type="submit">Connexion</button>
+    </form>
+    <div id="accountBar" class="account-bar" hidden><strong id="signedInAs"></strong><button id="logoutButton" class="btn secondary" type="button">Déconnexion</button></div>
+    <p id="authStatus" class="status" role="status" aria-live="polite"></p>
+    <p id="pageStatus" class="status" role="status" aria-live="polite"></p>
+  </section>
+
+  <section class="card" aria-label="Résumé des niveaux de stock">
+    <div class="summary">
+      <div class="summary-card red"><strong id="redCount">—</strong><span>Alertes rouges</span></div>
+      <div class="summary-card orange"><strong id="orangeCount">—</strong><span>À surveiller</span></div>
+      <div class="summary-card green"><strong id="configuredCount">—</strong><span>Seuils configurés</span></div>
+    </div>
+    <div id="alertBanner" class="alert-banner" role="status" aria-live="polite" hidden></div>
+  </section>
+
+  <section class="card">
+    <div class="toolbar"><h2>État du stock par produit</h2><button id="refreshButton" class="btn secondary" type="button" disabled>Actualiser</button></div>
+    <p id="adminHelp" class="muted" hidden>Définissez le seuil minimum par produit. Les alertes sont recalculées automatiquement après l’enregistrement.</p>
+    <div class="field filters"><label for="search">Rechercher un produit</label><input id="search" type="search" placeholder="Dénomination..." disabled></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Produit</th><th>Quantité</th><th>Jauge</th><th>Seuil minimum</th><th id="adminHeader" class="admin-col" hidden>Configurer le seuil</th></tr></thead>
+        <tbody id="stockRows"></tbody>
+      </table>
+      <div id="emptyState" class="empty">Connectez-vous pour consulter les alertes.</div>
+    </div>
+  </section>
+</main>
+<script src="auth.js"></script>
+<script>
+'use strict';
+
+const API = `${window.AppAuth.API_BASE}/api/stock`;
+const $ = (id) => document.getElementById(id);
+let currentUser = window.AppAuth.user();
+let stockItems = [];
+const isAdmin = () => ['admin', 'superadmin'].includes(currentUser?.role);
+
+function showStatus(element, message, type = 'info') {
+  element.textContent = message;
+  element.className = `status ${type}`;
+}
+
+function updateAuthState() {
+  const signedIn = Boolean(currentUser);
+  $('loginForm').hidden = signedIn;
+  $('accountBar').hidden = !signedIn;
+  $('signedInAs').textContent = signedIn
+    ? `Connecté : ${currentUser.username} (${
+      currentUser.role === 'superadmin' ? 'SuperAdmin'
+        : currentUser.role === 'admin' ? 'administrateur' : 'utilisateur'
+    })`
+    : '';
+  $('refreshButton').disabled = !signedIn;
+  $('search').disabled = !signedIn;
+  $('adminHeader').hidden = !isAdmin();
+  $('adminHelp').hidden = !isAdmin();
+  if (!signedIn) {
+    stockItems = [];
+    renderStock();
+    $('redCount').textContent = '—';
+    $('orangeCount').textContent = '—';
+    $('configuredCount').textContent = '—';
+    $('alertBanner').hidden = true;
+  }
+}
+
+async function login(event) {
+  event.preventDefault();
+  $('loginButton').disabled = true;
+  try {
+    currentUser = await window.AppAuth.login($('loginUsername').value.trim(), $('loginPassword').value);
+    $('loginPassword').value = '';
+    updateAuthState();
+    showStatus($('authStatus'), 'Connexion réussie.', 'success');
+    await loadStock();
+  } catch (error) {
+    showStatus($('authStatus'), `Connexion impossible : ${error.message}`, 'error');
+  } finally {
+    $('loginButton').disabled = false;
+  }
+}
+
+function logout() {
+  window.AppAuth.logout();
+  currentUser = null;
+  updateAuthState();
+  showStatus($('authStatus'), 'Session fermée.', 'info');
+  $('pageStatus').className = 'status';
+}
+
+function levelFor(item) {
+  if (!item.min_quantity) return { key: 'neutral', label: 'Seuil non configuré', percent: 0 };
+  if (item.quantity <= item.min_quantity) return { key: 'red', label: 'Alerte : seuil minimum atteint', percent: Math.min(100, item.quantity / (item.min_quantity * 2) * 100) };
+  if (item.quantity <= item.min_quantity * 2) return { key: 'orange', label: 'À surveiller', percent: item.quantity / (item.min_quantity * 2) * 100 };
+  return { key: 'green', label: 'Stock normal', percent: 100 };
+}
+
+function updateSummary() {
+  const configured = stockItems.filter((item) => item.min_quantity > 0);
+  const red = configured.filter((item) => item.quantity <= item.min_quantity).length;
+  const orange = configured.filter((item) => item.quantity > item.min_quantity && item.quantity <= item.min_quantity * 2).length;
+  $('redCount').textContent = String(red);
+  $('orangeCount').textContent = String(orange);
+  $('configuredCount').textContent = `${configured.length}/${stockItems.length}`;
+  const banner = $('alertBanner');
+  banner.hidden = false;
+  banner.className = 'alert-banner';
+  if (red) {
+    banner.classList.add('red');
+    banner.textContent = `Alerte stock : ${red} produit(s) ont atteint ou dépassé leur seuil minimum.`;
+  } else if (orange) {
+    banner.classList.add('orange');
+    banner.textContent = `${orange} produit(s) sont dans la zone de vigilance.`;
+  } else if (configured.length < stockItems.length) {
+    banner.classList.add('orange');
+    banner.textContent = `${stockItems.length - configured.length} produit(s) n’ont pas encore de seuil configuré.`;
+  } else {
+    banner.classList.add('green');
+    banner.textContent = 'Aucune alerte : les niveaux de stock sont au-dessus des seuils configurés.';
+  }
+}
+
+function renderStock() {
+  const query = $('search').value.trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const filtered = stockItems.filter((item) => item.denomination.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().includes(query));
+  $('stockRows').replaceChildren();
+  $('emptyState').hidden = filtered.length > 0;
+  if (!filtered.length) {
+    $('emptyState').textContent = stockItems.length ? 'Aucun produit ne correspond à la recherche.' : 'Aucun article en stock.';
+  }
+  for (const item of filtered) {
+    const level = levelFor(item);
+    const row = document.createElement('tr');
+    const name = document.createElement('td');
+    name.textContent = item.denomination;
+    const quantity = document.createElement('td');
+    quantity.className = 'quantity';
+    quantity.textContent = String(item.quantity);
+    const gaugeCell = document.createElement('td');
+    gaugeCell.className = 'gauge-wrap';
+    const gauge = document.createElement('div');
+    gauge.className = 'gauge';
+    gauge.setAttribute('role', 'meter');
+    gauge.setAttribute('aria-label', `Niveau de stock de ${item.denomination}`);
+    gauge.setAttribute('aria-valuemin', '0');
+    gauge.setAttribute('aria-valuemax', String(item.min_quantity ? item.min_quantity * 2 : Math.max(item.quantity, 1)));
+    gauge.setAttribute('aria-valuenow', String(Math.min(item.quantity, Number(gauge.getAttribute('aria-valuemax')))));
+    const fill = document.createElement('div');
+    fill.className = `gauge-fill ${level.key === 'neutral' ? '' : level.key}`;
+    fill.style.width = `${level.percent}%`;
+    gauge.append(fill);
+    const label = document.createElement('span');
+    label.className = `level ${level.key}`;
+    label.textContent = level.label;
+    gaugeCell.append(gauge, label);
+    const minimum = document.createElement('td');
+    minimum.textContent = item.min_quantity ? String(item.min_quantity) : 'Non défini';
+    row.append(name, quantity, gaugeCell, minimum);
+    if (isAdmin()) {
+      const configCell = document.createElement('td');
+      configCell.className = 'admin-col';
+      const input = document.createElement('input');
+      input.className = 'threshold-input';
+      input.type = 'number';
+      input.min = '0';
+      input.step = '1';
+      input.value = String(item.min_quantity || 0);
+      input.setAttribute('aria-label', `Seuil minimum pour ${item.denomination}`);
+      const save = document.createElement('button');
+      save.className = 'save-threshold';
+      save.type = 'button';
+      save.textContent = 'Enregistrer';
+      save.addEventListener('click', () => saveThreshold(item, input, save));
+      configCell.append(input, save);
+      row.append(configCell);
+    }
+    $('stockRows').append(row);
+  }
+  updateSummary();
+}
+
+async function loadStock() {
+  if (!currentUser) return;
+  $('refreshButton').disabled = true;
+  showStatus($('pageStatus'), 'Chargement du stock...', 'info');
+  try {
+    const response = await fetch(API, { headers: window.AppAuth.headers() });
+    if (response.status === 401) {
+      logout();
+      throw new Error('Session expirée. Connectez-vous à nouveau.');
+    }
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    stockItems = await response.json();
+    renderStock();
+    showStatus($('pageStatus'), `${stockItems.length} produit(s) évalué(s).`, 'success');
+  } catch (error) {
+    showStatus($('pageStatus'), `Impossible de charger le stock : ${error.message}`, 'error');
+  } finally {
+    $('refreshButton').disabled = !currentUser;
+  }
+}
+
+async function saveThreshold(item, input, button) {
+  if (!isAdmin()) return;
+  const minimum = Number(input.value);
+  if (!Number.isInteger(minimum) || minimum < 0) {
+    showStatus($('pageStatus'), 'Le seuil minimum doit être un entier positif ou nul.', 'error');
+    return;
+  }
+  button.disabled = true;
+  try {
+    const response = await fetch(`${API}/${item.id}`, {
+      method: 'PATCH',
+      headers: window.AppAuth.headers({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ min_quantity: minimum })
+    });
+    const result = await response.json();
+    if (response.status === 401) {
+      logout();
+      throw new Error('Session expirée. Connectez-vous à nouveau.');
+    }
+    if (!response.ok) throw new Error(result.detail || `HTTP ${response.status}`);
+    showStatus($('pageStatus'), `Seuil minimum de « ${item.denomination} » enregistré.`, 'success');
+    await loadStock();
+    showStatus($('pageStatus'), `Seuil minimum de « ${item.denomination} » enregistré.`, 'success');
+  } catch (error) {
+    showStatus($('pageStatus'), `Enregistrement du seuil impossible : ${error.message}`, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+$('loginForm').addEventListener('submit', login);
+$('logoutButton').addEventListener('click', logout);
+$('refreshButton').addEventListener('click', loadStock);
+$('search').addEventListener('input', renderStock);
+
+async function initialize() {
+  updateAuthState();
+  if (!currentUser) {
+    showStatus($('authStatus'), 'Connectez-vous pour consulter les alertes de stock.', 'info');
+    return;
+  }
+  try {
+    const response = await fetch(`${window.AppAuth.API_BASE}/api/auth/me`, { headers: window.AppAuth.headers() });
+    if (!response.ok) throw new Error('Session invalide.');
+    currentUser = await response.json();
+    updateAuthState();
+    await loadStock();
+  } catch (error) {
+    logout();
+    showStatus($('authStatus'), `Votre session a expiré : ${error.message}`, 'error');
+  }
+}
+
+initialize();
+</script>
+</body>
+</html>
