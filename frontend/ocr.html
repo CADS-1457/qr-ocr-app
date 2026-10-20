@@ -66,12 +66,12 @@
 
   <section id="jobsCard" class="card" hidden>
     <div class="toolbar">
-      <h2>Mes documents</h2>
+      <h2 id="jobsTitle">Mes documents</h2>
       <button id="refreshButton" class="btn light" type="button">Actualiser</button>
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Date</th><th>Fichier</th><th>Statut</th><th>Type</th><th>Facture</th><th class="num">Total TTC</th><th class="num">Confiance</th></tr></thead>
+        <thead><tr><th>Date</th><th id="ownerHeader" hidden>Propriétaire</th><th>Fichier</th><th>Statut</th><th>Type</th><th>Facture</th><th class="num">Total TTC</th><th class="num">Confiance</th></tr></thead>
         <tbody id="jobsBody"></tbody>
       </table>
     </div>
@@ -187,16 +187,20 @@ async function request(path, options = {}) {
 function renderJobs() {
   const body = $('jobsBody');
   body.replaceChildren();
+  const admin = canDelete();
+  $('ownerHeader').hidden = !admin;
+  $('jobsTitle').textContent = admin ? 'Tous les documents' : 'Mes documents';
 
   if (!jobs.length) {
-    body.append(el('tr', {}, el('td', { className: 'empty', text: 'Aucun document pour le moment.', attrs: { colspan: '7' } })));
+    body.append(el('tr', {}, el('td', { className: 'empty', text: 'Aucun document pour le moment.', attrs: { colspan: admin ? '8' : '7' } })));
     return;
   }
 
   jobs.forEach((job) => {
     const result = job.result || {};
-    const row = el('tr', { attrs: { 'aria-selected': String(job.id === selectedId) } },
-      el('td', { text: formatDateTime(job.created_at) }),
+    const cells = [el('td', { text: formatDateTime(job.created_at) })];
+    if (admin) cells.push(el('td', { text: job.owner_username || `#${job.owner_id}` }));
+    cells.push(
       el('td', { text: job.original_filename || '—' }),
       el('td', {}, badge(STATUS_LABELS[job.status] || job.status, job.status)),
       el('td', { text: TYPE_LABELS[job.document_type] || job.document_type || '—' }),
@@ -204,6 +208,7 @@ function renderJobs() {
       el('td', { className: 'num', text: money(result.total) }),
       el('td', { className: 'num', text: typeof job.confidence === 'number' ? `${Math.round(job.confidence * 100)} %` : '—' })
     );
+    const row = el('tr', { attrs: { 'aria-selected': String(job.id === selectedId) } }, ...cells);
     row.addEventListener('click', () => selectJob(job.id));
     body.append(row);
   });

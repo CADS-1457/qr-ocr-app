@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse
 
 from redis import Redis
 from rq import Queue
+from sqlalchemy import bindparam, text
 from sqlmodel import Session, select
 
 from models.ocr_job import OcrJob
@@ -77,7 +78,36 @@ def build_safe_filename(
     return f"{token}{suffix}"
 
 
-def job_to_dict(job: OcrJob) -> dict:
+ADMIN_ROLES = ("admin", "superadmin")
+
+
+def is_admin(user) -> bool:
+    return user.role in ADMIN_ROLES
+
+
+def can_access(user, job: OcrJob) -> bool:
+    return is_admin(user) or job.owner_id == user.id
+
+
+def owner_names(session: Session, owner_ids: set) -> dict:
+    if not owner_ids:
+        return {}
+
+    rows = session.execute(
+        text(
+            "SELECT id, username FROM useraccount "
+            "WHERE id IN :ids"
+        ).bindparams(bindparam("ids", expanding=True)),
+        {"ids": list(owner_ids)},
+    ).all()
+
+    return {row[0]: row[1] for row in rows}
+
+
+def job_to_dict(
+    job: OcrJob,
+    owner_username: Optional[str] = None,
+) -> dict:
     structured_data = None
 
     if job.structured_data:
@@ -91,6 +121,7 @@ def job_to_dict(job: OcrJob) -> dict:
     return {
         "id": job.id,
         "owner_id": job.owner_id,
+        "owner_username": owner_username,
         "status": job.status,
         "document_type": job.document_type,
         "original_filename": job.original_filename,
@@ -280,16 +311,28 @@ def register_ocr_routes(
         user = current_user(authorization)
 
         with Session(engine) as session:
+            statement = select(OcrJob)
+
+            if not is_admin(user):
+                statement = statement.where(
+                    OcrJob.owner_id == user.id
+                )
+
             statement = (
-                select(OcrJob)
-                .where(OcrJob.owner_id == user.id)
+                statement
                 .order_by(OcrJob.created_at.desc())
                 .limit(100)
             )
 
+            jobs = session.exec(statement).all()
+            names = owner_names(
+                session,
+                {job.owner_id for job in jobs},
+            )
+
             return [
-                job_to_dict(job)
-                for job in session.exec(statement).all()
+                job_to_dict(job, names.get(job.owner_id))
+                for job in jobs
             ]
 
     @router.get("/jobs/{job_id}")
@@ -304,13 +347,15 @@ def register_ocr_routes(
         with Session(engine) as session:
             job = session.get(OcrJob, job_id)
 
-            if not job or job.owner_id != user.id:
+            if not job or not can_access(user, job):
                 raise HTTPException(
                     status_code=404,
                     detail="Travail OCR introuvable.",
                 )
 
-            return job_to_dict(job)
+            names = owner_names(session, {job.owner_id})
+
+            return job_to_dict(job, names.get(job.owner_id))
 
     @router.get("/jobs/{job_id}/file")
     def get_ocr_job_file(
@@ -324,7 +369,7 @@ def register_ocr_routes(
         with Session(engine) as session:
             job = session.get(OcrJob, job_id)
 
-            if not job or job.owner_id != user.id:
+            if not job or not can_access(user, job):
                 raise HTTPException(
                     status_code=404,
                     detail="Travail OCR introuvable.",
@@ -364,7 +409,7 @@ def register_ocr_routes(
     ):
         user = current_user(authorization)
 
-        if user.role not in ("admin", "superadmin"):
+        if not is_admin(user):
             raise HTTPException(
                 status_code=403,
                 detail="Droits administrateur requis.",
