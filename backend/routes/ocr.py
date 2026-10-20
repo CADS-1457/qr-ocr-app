@@ -355,4 +355,41 @@ def register_ocr_routes(
             },
         )
 
+    @router.delete("/jobs/{job_id}")
+    def delete_ocr_job(
+        job_id: int,
+        authorization: Optional[str] = Header(
+            default=None
+        ),
+    ):
+        user = current_user(authorization)
+
+        if user.role not in ("admin", "superadmin"):
+            raise HTTPException(
+                status_code=403,
+                detail="Droits administrateur requis.",
+            )
+
+        with Session(engine) as session:
+            job = session.get(OcrJob, job_id)
+
+            if not job:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Travail OCR introuvable.",
+                )
+
+            storage_path = job.storage_path
+
+            session.delete(job)
+            session.commit()
+
+        if storage_path:
+            path = Path(storage_path).resolve()
+
+            if UPLOAD_DIRECTORY.resolve() in path.parents:
+                path.unlink(missing_ok=True)
+
+        return {"deleted": job_id}
+
     app.include_router(router)

@@ -12,7 +12,7 @@
     h1{margin:0 0 6px;color:var(--primary);font-size:28px}h2{margin:0 0 12px}h3{margin:18px 0 8px}.muted{color:var(--muted)}
     .header,.toolbar,.auth-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.header,.toolbar,.auth-bar{justify-content:space-between}
     .btn{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:10px 14px;border:0;border-radius:10px;background:var(--primary);color:#fff;font-weight:700;text-decoration:none;cursor:pointer}
-    .btn:hover{background:var(--primary-dark)}.btn.light{background:#fff;color:var(--text);border:1px solid var(--border)}.btn:disabled{opacity:.55;cursor:not-allowed}
+    .btn:hover{background:var(--primary-dark)}    .btn.light{background:#fff;color:var(--text);border:1px solid var(--border)}.btn.danger{background:#b91c1c}.btn.danger:hover{background:#991b1b}.btn:disabled{opacity:.55;cursor:not-allowed}
     .login-grid{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end;margin-top:16px}
     .upload-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px}
     .field{min-width:0}.field label{display:block;margin:0 0 6px;font-size:14px;font-weight:700}
@@ -81,8 +81,12 @@
   <section id="detailCard" class="card" hidden>
     <div class="toolbar">
       <h2 id="detailTitle">Détail</h2>
-      <button id="downloadButton" class="btn light" type="button">Télécharger le JSON</button>
+      <div class="toolbar">
+        <button id="downloadButton" class="btn light" type="button">Télécharger le JSON</button>
+        <button id="deleteButton" class="btn danger" type="button" hidden>Supprimer le document</button>
+      </div>
     </div>
+    <div id="detailStatus" class="status" aria-live="polite"></div>
     <div id="detailBody"></div>
   </section>
 </main>
@@ -314,11 +318,39 @@ function renderPreview(job) {
   return container;
 }
 
+function canDelete() {
+  return Boolean(currentUser) && ['admin', 'superadmin'].includes(currentUser.role);
+}
+
+async function deleteSelected() {
+  const job = jobs.find((item) => item.id === selectedId);
+  if (!job || !canDelete()) return;
+  if (!window.confirm(`Supprimer définitivement « ${job.original_filename || `document ${job.id}`} » et ses données extraites ?`)) return;
+
+  $('deleteButton').disabled = true;
+  try {
+    await request(`/ocr/jobs/${job.id}`, { method: 'DELETE' });
+    const url = previewCache.get(job.id);
+    if (url) URL.revokeObjectURL(url);
+    previewCache.delete(job.id);
+    selectedId = null;
+    $('detailCard').hidden = true;
+    clearStatus($('detailStatus'));
+    await loadJobs();
+    showStatus($('listStatus'), 'Document supprimé.', 'success');
+  } catch (error) {
+    showStatus($('detailStatus'), `Suppression impossible : ${error.message}`, 'error');
+  } finally {
+    $('deleteButton').disabled = false;
+  }
+}
+
 function renderDetail(job) {
   const body = $('detailBody');
   body.replaceChildren();
   $('detailTitle').textContent = job.original_filename || `Document ${job.id}`;
   $('detailCard').hidden = false;
+  $('deleteButton').hidden = !canDelete();
   body.append(renderPreview(job));
 
   if (job.status === 'failed') {
@@ -426,6 +458,7 @@ $('logoutButton').addEventListener('click', () => logout());
 $('uploadForm').addEventListener('submit', upload);
 $('refreshButton').addEventListener('click', loadJobs);
 $('downloadButton').addEventListener('click', downloadJson);
+$('deleteButton').addEventListener('click', deleteSelected);
 
 async function initialize() {
   updateAuthState();
