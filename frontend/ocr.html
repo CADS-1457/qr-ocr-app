@@ -71,7 +71,7 @@
     </div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Date</th><th id="ownerHeader" hidden>Propriétaire</th><th>Fichier</th><th>Statut</th><th>Type</th><th>Facture</th><th class="num">Total TTC</th><th class="num">Confiance</th></tr></thead>
+        <thead><tr><th>Date</th><th id="ownerHeader" hidden>Propriétaire</th><th>Fournisseur</th><th>Statut</th><th>Type</th><th>Facture</th><th class="num">Total TTC</th><th class="num">Confiance</th></tr></thead>
         <tbody id="jobsBody"></tbody>
       </table>
     </div>
@@ -201,7 +201,7 @@ function renderJobs() {
     const cells = [el('td', { text: formatDateTime(job.created_at) })];
     if (admin) cells.push(el('td', { text: job.owner_username || `#${job.owner_id}` }));
     cells.push(
-      el('td', { text: job.original_filename || '—' }),
+      supplierCell(job),
       el('td', {}, badge(STATUS_LABELS[job.status] || job.status, job.status)),
       el('td', { text: TYPE_LABELS[job.document_type] || job.document_type || '—' }),
       el('td', { text: result.invoice_number || '—' }),
@@ -212,6 +212,16 @@ function renderJobs() {
     row.addEventListener('click', () => selectJob(job.id));
     body.append(row);
   });
+}
+
+function truncate(text, max) {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+function supplierCell(job) {
+  const supplier = job.result && job.result.supplier && job.result.supplier.name;
+  const full = supplier || job.original_filename || '—';
+  return el('td', { text: truncate(full, 25), attrs: { title: supplier ? `${supplier} (${job.original_filename || ''})` : full } });
 }
 
 function kv(label, value) {
@@ -234,34 +244,46 @@ function renderInvoice(result) {
   const container = el('div');
   const payment = result.payment || {};
 
-  container.append(el('div', { className: 'grid' },
+  const addSection = (title, ...items) => {
+    container.append(el('h3', { text: title }));
+    container.append(el('div', { className: 'grid' }, ...items));
+  };
+
+  addSection('Facture',
     kv('Numéro de facture', result.invoice_number),
     kv('Date de facturation', formatDate(result.invoice_date)),
-    kv('Échéance', formatDate(result.due_date)),
-    kv('Fournisseur', partyText(result.supplier)),
-    kv('Client', partyText(result.customer)),
-    kv('Code client', result.customer_code),
-    ...(result.order_number ? [
+    kv('Échéance', formatDate(result.due_date)));
+
+  addSection('Fournisseur',
+    kv('Nom et adresse', partyText(result.supplier)),
+    kv('N° de TVA', vatText(result.supplier)));
+
+  addSection('Client',
+    kv('Nom et adresse', partyText(result.customer)),
+    kv('N° de TVA', vatText(result.customer)),
+    kv('Code client', result.customer_code));
+
+  if (result.order_number) {
+    addSection('Commande',
       kv('N° de commande', result.order_number),
       kv('Date de commande', formatDate(result.order_date)),
-      kv('Commandé par', result.ordered_by)
-    ] : []),
+      kv('Commandé par', result.ordered_by));
+  }
+
+  addSection('Montants',
     kv('Total HT', money(result.subtotal)),
     kv(`TVA${result.vat_rate ? ` ${number.format(result.vat_rate)} %` : ''}`, money(result.vat)),
     kv('Total TTC', money(result.total)),
     kv('Payé', money(result.paid)),
     kv('Reste à payer', money(result.balance_due)),
-    kv('Référence de paiement', payment.reference),
-    kv('Exonération de TVA', result.vat_exemption),
+    kv('Exonération de TVA', result.vat_exemption));
+
+  addSection('Paiement',
     kv('IBAN', payment.iban),
     kv('BIC', payment.bic),
-    kv('Communication structurée', payment.structured_communication)
-  ));
-  container.append(el('h3', { text: 'TVA' }));
-  container.append(el('div', { className: 'grid' },
-    kv('TVA fournisseur', vatText(result.supplier)),
-    kv('TVA client', vatText(result.customer))
-  ));
+    kv('Communication structurée', payment.structured_communication),
+    kv('Référence de paiement', payment.reference));
+
   container.querySelectorAll('.kv strong').forEach((node) => { node.style.whiteSpace = 'pre-line'; });
 
   const checkLabels = {
