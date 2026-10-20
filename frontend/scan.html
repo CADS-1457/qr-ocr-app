@@ -167,11 +167,7 @@
 <script>
 'use strict';
 
-// Le nom d'hôte utilisé pour afficher la page est également utilisé pour joindre l'API.
-// Exemple : page sur http://192.168.1.50:5500 -> API sur http://192.168.1.50:8000
-const API_URL = window.location.protocol === 'https:'
-    ? window.location.origin
-    : `${window.location.protocol}//${window.location.hostname}:8000`;
+const API_URL = window.AppAuth.API_BASE;
 
 const $ = (id) => document.getElementById(id);
 const appStatus = $('appStatus');

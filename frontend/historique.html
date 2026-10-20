@@ -100,9 +100,7 @@
 <script>
 'use strict';
 
-// En HTTP local : API sur le même PC au port 8000.
-// En HTTPS : l'API doit être publiée sur le même domaine avec le chemin /api.
-const API_BASE = location.protocol === 'https:' ? location.origin : `${location.protocol}//${location.hostname}:8000`;
+const API_BASE = window.AppAuth.API_BASE;
 const API = `${API_BASE}/api/scans`;
 const $ = id => document.getElementById(id);
 let all = [], filtered = [], page = 1, sortField = 'created_at', sortDir = 'desc', currentId = null;

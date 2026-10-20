@@ -46,7 +46,7 @@
           <button id="logoutButton" class="btn secondary" type="button" hidden>Déconnexion</button>
         </div>
       </div>
-      <form id="loginForm" class="login">
+      <form id="superadminLoginForm" class="login">
         <div>
           <label for="username">Compte SuperAdmin</label>
           <input id="username" autocomplete="username" required>
@@ -95,13 +95,13 @@
 
     function renderAuth() {
       const isSuperadmin = currentUser?.role === 'superadmin';
-      $('loginForm').hidden = Boolean(currentUser);
+      $('superadminLoginForm').hidden = isSuperadmin;
       $('logoutButton').hidden = !currentUser;
       $('auditPanel').hidden = !isSuperadmin;
       if (isSuperadmin) {
         showStatus($('authStatus'), `Connecté en tant que SuperAdmin : ${currentUser.username}`, 'success');
       } else if (currentUser) {
-        showStatus($('authStatus'), 'Accès réservé au compte SuperAdmin. Déconnectez-vous pour changer de compte.', 'error');
+        showStatus($('authStatus'), 'Ce journal est réservé au compte SuperAdmin. Saisissez ses identifiants ci-dessus pour continuer.', 'error');
       } else {
         showStatus($('authStatus'), 'Connectez-vous avec les identifiants SuperAdmin configurés au démarrage de l’API.', 'info');
       }
@@ -201,7 +201,7 @@
       showStatus($('authStatus'), message, message.includes('expirée') ? 'error' : 'info');
     }
 
-    $('loginForm').addEventListener('submit', login);
+    $('superadminLoginForm').addEventListener('submit', login);
     $('logoutButton').addEventListener('click', () => logout());
     $('refreshButton').addEventListener('click', loadAudit);
     $('previousButton').addEventListener('click', () => {
