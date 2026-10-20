@@ -11,6 +11,7 @@ from fastapi import (
     HTTPException,
     UploadFile,
 )
+from fastapi.responses import FileResponse
 
 from redis import Redis
 from rq import Queue
@@ -310,5 +311,48 @@ def register_ocr_routes(
                 )
 
             return job_to_dict(job)
+
+    @router.get("/jobs/{job_id}/file")
+    def get_ocr_job_file(
+        job_id: int,
+        authorization: Optional[str] = Header(
+            default=None
+        ),
+    ):
+        user = current_user(authorization)
+
+        with Session(engine) as session:
+            job = session.get(OcrJob, job_id)
+
+            if not job or job.owner_id != user.id:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Travail OCR introuvable.",
+                )
+
+            storage_path = job.storage_path
+            mime_type = job.mime_type
+
+        path = Path(storage_path or "").resolve()
+
+        if (
+            not storage_path
+            or UPLOAD_DIRECTORY.resolve() not in path.parents
+            or not path.is_file()
+        ):
+            raise HTTPException(
+                status_code=404,
+                detail="Document original introuvable.",
+            )
+
+        return FileResponse(
+            path,
+            media_type=mime_type or "application/octet-stream",
+            headers={
+                "Content-Disposition": "inline",
+                "X-Content-Type-Options": "nosniff",
+                "Cache-Control": "private, no-store",
+            },
+        )
 
     app.include_router(router)

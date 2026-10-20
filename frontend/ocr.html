@@ -27,6 +27,8 @@
     .grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.kv{padding:10px;border:1px solid var(--border);border-radius:10px}.kv small{display:block;color:var(--muted);margin-bottom:3px}.kv strong{overflow-wrap:anywhere}
     .checks{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
     pre{max-height:360px;overflow:auto;padding:12px;background:#f8fafc;border:1px solid var(--border);border-radius:10px;white-space:pre-wrap}
+    .preview{margin-top:4px}.preview iframe{display:block;width:100%;height:720px;border:1px solid var(--border);border-radius:10px;background:#f8fafc}
+    .preview img{display:block;max-width:100%;max-height:720px;margin:auto;border:1px solid var(--border);border-radius:10px}
     .empty{text-align:center;padding:30px;color:var(--muted)}[hidden]{display:none!important}
     @media(max-width:760px){.grid{grid-template-columns:1fr 1fr}}
     @media(max-width:600px){body{padding:10px}.card{padding:15px}.login-grid,.grid{grid-template-columns:1fr}.login-grid .btn,.upload-row .btn{width:100%}}
@@ -156,6 +158,7 @@ function logout(message = 'Session fermée.') {
   jobs = [];
   selectedId = null;
   stopPolling();
+  clearPreviewCache();
   updateAuthState();
   showStatus($('authStatus'), message, 'info');
 }
@@ -272,11 +275,51 @@ function renderInvoice(result) {
   return container;
 }
 
+const previewCache = new Map();
+
+async function loadPreviewUrl(job) {
+  if (!previewCache.has(job.id)) {
+    const response = await fetch(`${API}/ocr/jobs/${job.id}/file`, { headers: window.AppAuth.headers() });
+    if (response.status === 401) {
+      logout('Session expirée. Connectez-vous à nouveau.');
+      throw new Error('Session expirée.');
+    }
+    if (!response.ok) throw new Error(response.status === 404 ? 'Document original introuvable.' : `HTTP ${response.status}`);
+    previewCache.set(job.id, URL.createObjectURL(await response.blob()));
+  }
+  return previewCache.get(job.id);
+}
+
+function clearPreviewCache() {
+  previewCache.forEach((url) => URL.revokeObjectURL(url));
+  previewCache.clear();
+}
+
+function renderPreview(job) {
+  const container = el('div', { className: 'preview' }, el('h3', { text: 'Document original' }));
+  const holder = el('div', { className: 'muted', text: 'Chargement du document…' });
+  container.append(holder);
+
+  loadPreviewUrl(job).then((url) => {
+    const isPdf = job.mime_type === 'application/pdf';
+    const view = isPdf
+      ? el('iframe', { attrs: { src: url, title: `Aperçu de ${job.original_filename || 'document'}` } })
+      : el('img', { attrs: { src: url, alt: `Aperçu de ${job.original_filename || 'document'}` } });
+    holder.replaceWith(view);
+    container.append(el('p', {}, el('a', { text: 'Ouvrir dans un nouvel onglet', attrs: { href: url, target: '_blank', rel: 'noopener' } })));
+  }).catch((error) => {
+    holder.textContent = `Aperçu indisponible : ${error.message}`;
+  });
+
+  return container;
+}
+
 function renderDetail(job) {
   const body = $('detailBody');
   body.replaceChildren();
   $('detailTitle').textContent = job.original_filename || `Document ${job.id}`;
   $('detailCard').hidden = false;
+  body.append(renderPreview(job));
 
   if (job.status === 'failed') {
     body.append(el('div', { className: 'status error', text: job.error_message || 'Le traitement a échoué.' }));
