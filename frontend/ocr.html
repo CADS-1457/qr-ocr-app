@@ -220,7 +220,14 @@ function kv(label, value) {
 
 function partyText(party) {
   if (!party) return '';
-  return [party.name, ...(party.address || []), party.vat ? `TVA ${party.vat}` : ''].filter(Boolean).join('\n');
+  return [party.name, ...(party.address || [])].filter(Boolean).join('\n');
+}
+
+function vatText(party) {
+  const vat = party && party.vat;
+  if (!vat) return '';
+  const match = /^([A-Z]{2})(.+)$/.exec(vat);
+  return match ? `${match[2]}\nPays : ${match[1]}` : vat;
 }
 
 function renderInvoice(result) {
@@ -249,6 +256,11 @@ function renderInvoice(result) {
     kv('IBAN', payment.iban),
     kv('BIC', payment.bic),
     kv('Communication structurée', payment.structured_communication)
+  ));
+  container.append(el('h3', { text: 'TVA' }));
+  container.append(el('div', { className: 'grid' },
+    kv('TVA fournisseur', vatText(result.supplier)),
+    kv('TVA client', vatText(result.customer))
   ));
   container.querySelectorAll('.kv strong').forEach((node) => { node.style.whiteSpace = 'pre-line'; });
 
