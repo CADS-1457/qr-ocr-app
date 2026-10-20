@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f4c81">
+  <title>Documents OCR et factures</title>
+  <style>
+    :root{--primary:#0f4c81;--primary-dark:#0a365c;--bg:#eef2f7;--text:#1f2937;--muted:#64748b;--border:#dbe3ec}
+    *{box-sizing:border-box}body{margin:0;padding:16px;background:var(--bg);color:var(--text);font-family:Arial,sans-serif}
+    .container{max-width:1200px;margin:auto}.card{margin-bottom:16px;padding:20px;background:#fff;border-radius:16px;box-shadow:0 6px 22px rgba(15,76,129,.08)}
+    h1{margin:0 0 6px;color:var(--primary);font-size:28px}h2{margin:0 0 12px}h3{margin:18px 0 8px}.muted{color:var(--muted)}
+    .header,.toolbar,.auth-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.header,.toolbar,.auth-bar{justify-content:space-between}
+    .btn{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:10px 14px;border:0;border-radius:10px;background:var(--primary);color:#fff;font-weight:700;text-decoration:none;cursor:pointer}
+    .btn:hover{background:var(--primary-dark)}.btn.light{background:#fff;color:var(--text);border:1px solid var(--border)}.btn:disabled{opacity:.55;cursor:not-allowed}
+    .login-grid{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end;margin-top:16px}
+    .upload-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px}
+    .field{min-width:0}.field label{display:block;margin:0 0 6px;font-size:14px;font-weight:700}
+    .field input{width:100%;min-height:44px;padding:10px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;font:inherit}
+    input[type=file]{flex:1;min-width:220px;padding:9px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;font:inherit}
+    .status{display:none;margin-top:14px;padding:12px;border-radius:10px;line-height:1.4}.status.info{display:block;background:#dbeafe;color:#1e40af}.status.success{display:block;background:#dcfce7;color:#166534}.status.error{display:block;background:#fee2e2;color:#991b1b}
+    .table-wrap{overflow:auto;border:1px solid var(--border);border-radius:12px}table{width:100%;min-width:620px;border-collapse:collapse}th,td{padding:10px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:top}th{background:var(--primary);color:#fff;white-space:nowrap}
+    td.num,th.num{text-align:right;white-space:nowrap}tr.section td{background:#f1f5f9;font-weight:700}
+    #jobsBody tr{cursor:pointer}#jobsBody tr:hover{background:#f1f5f9}#jobsBody tr[aria-selected="true"]{background:#dbeafe}
+    .badge{display:inline-block;padding:3px 9px;border-radius:999px;font-size:13px;font-weight:700}
+    .badge.pending,.badge.processing{background:#fef3c7;color:#92400e}.badge.completed,.badge.ok{background:#dcfce7;color:#166534}.badge.failed,.badge.ko{background:#fee2e2;color:#991b1b}
+    .grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.kv{padding:10px;border:1px solid var(--border);border-radius:10px}.kv small{display:block;color:var(--muted);margin-bottom:3px}.kv strong{overflow-wrap:anywhere}
+    .checks{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+    pre{max-height:360px;overflow:auto;padding:12px;background:#f8fafc;border:1px solid var(--border);border-radius:10px;white-space:pre-wrap}
+    .empty{text-align:center;padding:30px;color:var(--muted)}[hidden]{display:none!important}
+    @media(max-width:760px){.grid{grid-template-columns:1fr 1fr}}
+    @media(max-width:600px){body{padding:10px}.card{padding:15px}.login-grid,.grid{grid-template-columns:1fr}.login-grid .btn,.upload-row .btn{width:100%}}
+  </style>
+  <link rel="stylesheet" href="app-shell.css">
+  <script src="app-navigation.js" defer></script>
+</head>
+<body data-auth-required="true">
+<main class="container">
+  <section class="card">
+    <div class="header">
+      <div><h1>Documents OCR</h1><div class="muted">Envoyez une facture (image ou PDF) : le texte est lu puis les champs sont extraits automatiquement.</div></div>
+    </div>
+    <div id="authBar" class="auth-bar" hidden>
+      <strong id="signedInAs"></strong>
+      <button id="logoutButton" class="btn light" type="button">Déconnexion</button>
+    </div>
+    <form id="loginForm" class="login-grid">
+      <div class="field"><label for="loginUsername">Utilisateur</label><input id="loginUsername" autocomplete="username" required></div>
+      <div class="field"><label for="loginPassword">Mot de passe</label><input id="loginPassword" type="password" autocomplete="current-password" required></div>
+      <button id="loginButton" class="btn" type="submit">Connexion</button>
+    </form>
+    <div id="authStatus" class="status" aria-live="polite"></div>
+  </section>
+
+  <section id="uploadCard" class="card" hidden>
+    <h2>Nouveau document</h2>
+    <form id="uploadForm" class="upload-row">
+      <input id="fileInput" type="file" accept="image/jpeg,image/png,image/webp,image/bmp,application/pdf" required>
+      <button id="uploadButton" class="btn" type="submit">Analyser</button>
+    </form>
+    <div class="muted" style="margin-top:8px">JPEG, PNG, WebP, BMP ou PDF — 20 Mo maximum.</div>
+    <div id="uploadStatus" class="status" aria-live="polite"></div>
+  </section>
+
+  <section id="jobsCard" class="card" hidden>
+    <div class="toolbar">
+      <h2>Mes documents</h2>
+      <button id="refreshButton" class="btn light" type="button">Actualiser</button>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Date</th><th>Fichier</th><th>Statut</th><th>Type</th><th>Facture</th><th class="num">Total TTC</th><th class="num">Confiance</th></tr></thead>
+        <tbody id="jobsBody"></tbody>
+      </table>
+    </div>
+    <div id="listStatus" class="status" aria-live="polite"></div>
+  </section>
+
+  <section id="detailCard" class="card" hidden>
+    <div class="toolbar">
+      <h2 id="detailTitle">Détail</h2>
+      <button id="downloadButton" class="btn light" type="button">Télécharger le JSON</button>
+    </div>
+    <div id="detailBody"></div>
+  </section>
+</main>
+<script src="auth.js"></script>
+<script>
+'use strict';
+
+const API = `${window.AppAuth.API_BASE}/api`;
+const $ = (id) => document.getElementById(id);
+const POLL_DELAY = 3000;
+const STATUS_LABELS = { pending: 'En attente', processing: 'En cours', completed: 'Terminé', failed: 'Échec' };
+const TYPE_LABELS = { invoice: 'Facture', generic: 'Document', purchase_order: 'Bon de commande' };
+
+let currentUser = window.AppAuth.user();
+let jobs = [];
+let selectedId = null;
+let pollTimer = null;
+
+function showStatus(element, message, type = 'info') {
+  element.textContent = message;
+  element.className = `status ${type}`;
+}
+
+function clearStatus(element) {
+  element.textContent = '';
+  element.className = 'status';
+}
+
+function el(tag, options = {}, ...children) {
+  const node = document.createElement(tag);
+  if (options.className) node.className = options.className;
+  if (options.text !== undefined) node.textContent = options.text;
+  if (options.attrs) Object.entries(options.attrs).forEach(([key, value]) => node.setAttribute(key, value));
+  node.append(...children);
+  return node;
+}
+
+const euro = new Intl.NumberFormat('fr-BE', { style: 'currency', currency: 'EUR' });
+const number = new Intl.NumberFormat('fr-BE', { maximumFractionDigits: 2 });
+
+function money(value) {
+  return typeof value === 'number' ? euro.format(value) : '—';
+}
+
+function formatDate(value) {
+  if (!value) return '—';
+  const date = new Date(value.length === 10 ? `${value}T00:00:00` : value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString('fr-BE');
+}
+
+function formatDateTime(value) {
+  const date = value ? new Date(value) : null;
+  return date && !Number.isNaN(date.getTime()) ? date.toLocaleString('fr-BE') : '—';
+}
+
+function badge(label, kind) {
+  return el('span', { className: `badge ${kind}`, text: label });
+}
+
+function updateAuthState() {
+  const signedIn = Boolean(currentUser);
+  $('loginForm').hidden = signedIn;
+  $('authBar').hidden = !signedIn;
+  $('uploadCard').hidden = !signedIn;
+  $('jobsCard').hidden = !signedIn;
+  if (!signedIn) $('detailCard').hidden = true;
+  $('signedInAs').textContent = signedIn ? `Connecté : ${currentUser.username}` : '';
+}
+
+function logout(message = 'Session fermée.') {
+  window.AppAuth.logout();
+  currentUser = null;
+  jobs = [];
+  selectedId = null;
+  stopPolling();
+  updateAuthState();
+  showStatus($('authStatus'), message, 'info');
+}
+
+async function request(path, options = {}) {
+  const response = await fetch(`${API}${path}`, {
+    ...options,
+    headers: window.AppAuth.headers(options.headers || {})
+  });
+  if (response.status === 401) {
+    logout('Session expirée. Connectez-vous à nouveau.');
+    throw new Error('Session expirée.');
+  }
+  if (!response.ok) {
+    let detail = `HTTP ${response.status}`;
+    try { detail = (await response.json()).detail || detail; } catch { /* corps non JSON */ }
+    throw new Error(detail);
+  }
+  return response.json();
+}
+
+function renderJobs() {
+  const body = $('jobsBody');
+  body.replaceChildren();
+
+  if (!jobs.length) {
+    body.append(el('tr', {}, el('td', { className: 'empty', text: 'Aucun document pour le moment.', attrs: { colspan: '7' } })));
+    return;
+  }
+
+  jobs.forEach((job) => {
+    const result = job.result || {};
+    const row = el('tr', { attrs: { 'aria-selected': String(job.id === selectedId) } },
+      el('td', { text: formatDateTime(job.created_at) }),
+      el('td', { text: job.original_filename || '—' }),
+      el('td', {}, badge(STATUS_LABELS[job.status] || job.status, job.status)),
+      el('td', { text: TYPE_LABELS[job.document_type] || job.document_type || '—' }),
+      el('td', { text: result.invoice_number || '—' }),
+      el('td', { className: 'num', text: money(result.total) }),
+      el('td', { className: 'num', text: typeof job.confidence === 'number' ? `${Math.round(job.confidence * 100)} %` : '—' })
+    );
+    row.addEventListener('click', () => selectJob(job.id));
+    body.append(row);
+  });
+}
+
+function kv(label, value) {
+  return el('div', { className: 'kv' }, el('small', { text: label }), el('strong', { text: value || '—' }));
+}
+
+function partyText(party) {
+  if (!party) return '';
+  return [party.name, ...(party.address || []), party.vat ? `TVA ${party.vat}` : ''].filter(Boolean).join('\n');
+}
+
+function renderInvoice(result) {
+  const container = el('div');
+  const payment = result.payment || {};
+
+  container.append(el('div', { className: 'grid' },
+    kv('Numéro de facture', result.invoice_number),
+    kv('Date de facturation', formatDate(result.invoice_date)),
+    kv('Échéance', formatDate(result.due_date)),
+    kv('Fournisseur', partyText(result.supplier)),
+    kv('Client', partyText(result.customer)),
+    kv('Code client', result.customer_code),
+    kv('Total HT', money(result.subtotal)),
+    kv(`TVA${result.vat_rate ? ` ${number.format(result.vat_rate)} %` : ''}`, money(result.vat)),
+    kv('Total TTC', money(result.total)),
+    kv('Payé', money(result.paid)),
+    kv('Reste à payer', money(result.balance_due)),
+    kv('IBAN', payment.iban),
+    kv('BIC', payment.bic),
+    kv('Communication structurée', payment.structured_communication)
+  ));
+  container.querySelectorAll('.kv strong').forEach((node) => { node.style.whiteSpace = 'pre-line'; });
+
+  const checkLabels = {
+    lines_match_subtotal: 'Lignes = total HT',
+    total_matches_subtotal_plus_vat: 'HT + TVA = TTC',
+    structured_communication_valid: 'Communication structurée valide'
+  };
+  const checks = el('div', { className: 'checks' });
+  Object.entries(result.checks || {}).forEach(([key, ok]) => {
+    checks.append(badge(`${ok ? '✓' : '✗'} ${checkLabels[key] || key}`, ok ? 'ok' : 'ko'));
+  });
+  (result.warnings || []).forEach((warning) => checks.append(badge(`⚠ ${warning}`, 'ko')));
+  container.append(checks);
+
+  container.append(el('h3', { text: `Lignes (${(result.lines || []).length})` }));
+  const tbody = el('tbody');
+  let section = Symbol('none');
+  (result.lines || []).forEach((line) => {
+    if (line.section !== section) {
+      section = line.section;
+      if (section) tbody.append(el('tr', { className: 'section' }, el('td', { text: section, attrs: { colspan: '4' } })));
+    }
+    const description = el('td', { text: line.description });
+    if (line.note) description.append(el('div', { className: 'muted', text: `>> ${line.note}` }));
+    tbody.append(el('tr', {}, description,
+      el('td', { className: 'num', text: money(line.unit_price) }),
+      el('td', { className: 'num', text: number.format(line.quantity) }),
+      el('td', { className: 'num', text: money(line.total) })));
+  });
+  container.append(el('div', { className: 'table-wrap' }, el('table', {},
+    el('thead', {}, el('tr', {}, el('th', { text: 'Désignation' }), el('th', { className: 'num', text: 'P.U. HT' }), el('th', { className: 'num', text: 'Qté' }), el('th', { className: 'num', text: 'Total HT' }))),
+    tbody)));
+
+  if ((result.payments || []).length) {
+    container.append(el('h3', { text: 'Versements' }));
+    container.append(el('ul', {}, ...result.payments.map((item) =>
+      el('li', { text: `${formatDate(item.date)} — ${money(item.amount)} — ${item.method || ''}` }))));
+  }
+  return container;
+}
+
+function renderDetail(job) {
+  const body = $('detailBody');
+  body.replaceChildren();
+  $('detailTitle').textContent = job.original_filename || `Document ${job.id}`;
+  $('detailCard').hidden = false;
+
+  if (job.status === 'failed') {
+    body.append(el('div', { className: 'status error', text: job.error_message || 'Le traitement a échoué.' }));
+    $('downloadButton').hidden = true;
+    return;
+  }
+  if (job.status !== 'completed' || !job.result) {
+    body.append(el('div', { className: 'status info', text: 'Analyse en cours…' }));
+    $('downloadButton').hidden = true;
+    return;
+  }
+
+  $('downloadButton').hidden = false;
+  if (job.result.document_type === 'invoice') {
+    body.append(renderInvoice(job.result));
+  } else {
+    body.append(el('div', { className: 'status info', text: 'Ce document n’a pas été reconnu comme une facture : seul le texte brut est disponible.' }));
+  }
+  body.append(el('h3', { text: 'Texte brut' }), el('pre', { text: job.result.raw_text || '(aucun texte détecté)' }));
+}
+
+function selectJob(id) {
+  selectedId = id;
+  renderJobs();
+  const job = jobs.find((item) => item.id === id);
+  if (job) renderDetail(job);
+}
+
+function stopPolling() {
+  clearTimeout(pollTimer);
+  pollTimer = null;
+}
+
+function schedulePolling() {
+  stopPolling();
+  if (currentUser && jobs.some((job) => job.status === 'pending' || job.status === 'processing')) {
+    pollTimer = setTimeout(loadJobs, POLL_DELAY);
+  }
+}
+
+async function loadJobs() {
+  try {
+    jobs = await request('/ocr/jobs');
+    clearStatus($('listStatus'));
+    renderJobs();
+    const selected = jobs.find((job) => job.id === selectedId);
+    if (selected) renderDetail(selected);
+    schedulePolling();
+  } catch (error) {
+    if (currentUser) showStatus($('listStatus'), `Chargement impossible : ${error.message}`, 'error');
+  }
+}
+
+async function upload(event) {
+  event.preventDefault();
+  const file = $('fileInput').files[0];
+  if (!file) return;
+
+  const form = new FormData();
+  form.append('file', file);
+  $('uploadButton').disabled = true;
+  showStatus($('uploadStatus'), 'Envoi du document…', 'info');
+  try {
+    const job = await request('/ocr/jobs', { method: 'POST', body: form });
+    $('uploadForm').reset();
+    showStatus($('uploadStatus'), 'Document envoyé : l’analyse démarre.', 'success');
+    selectedId = job.id;
+    await loadJobs();
+    selectJob(job.id);
+  } catch (error) {
+    showStatus($('uploadStatus'), `Envoi impossible : ${error.message}`, 'error');
+  } finally {
+    $('uploadButton').disabled = false;
+  }
+}
+
+function downloadJson() {
+  const job = jobs.find((item) => item.id === selectedId);
+  if (!job || !job.result) return;
+  const blob = new Blob([JSON.stringify(job.result, null, 2)], { type: 'application/json' });
+  const link = el('a', { attrs: { href: URL.createObjectURL(blob), download: `ocr-${job.id}.json` } });
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
+async function login(event) {
+  event.preventDefault();
+  $('loginButton').disabled = true;
+  try {
+    currentUser = await window.AppAuth.login($('loginUsername').value.trim(), $('loginPassword').value);
+    $('loginPassword').value = '';
+    updateAuthState();
+    showStatus($('authStatus'), 'Connexion réussie.', 'success');
+    await loadJobs();
+  } catch (error) {
+    showStatus($('authStatus'), `Connexion impossible : ${error.message}`, 'error');
+  } finally {
+    $('loginButton').disabled = false;
+  }
+}
+
+$('loginForm').addEventListener('submit', login);
+$('logoutButton').addEventListener('click', () => logout());
+$('uploadForm').addEventListener('submit', upload);
+$('refreshButton').addEventListener('click', loadJobs);
+$('downloadButton').addEventListener('click', downloadJson);
+
+async function initialize() {
+  updateAuthState();
+  if (!currentUser) {
+    showStatus($('authStatus'), 'Connectez-vous pour envoyer et consulter vos documents.', 'info');
+    return;
+  }
+  try {
+    currentUser = await request('/auth/me');
+    updateAuthState();
+    await loadJobs();
+  } catch (error) {
+    if (currentUser) showStatus($('authStatus'), `Impossible d’initialiser la page : ${error.message}`, 'error');
+  }
+}
+
+initialize();
+</script>
+</body>
+</html>

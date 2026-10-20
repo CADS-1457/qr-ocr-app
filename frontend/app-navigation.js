@@ -6,7 +6,8 @@
       label: 'Scanner et historique',
       links: [
         ['scan.html', 'Scanner QR/OCR'],
-        ['historique.html', 'Historique des scans']
+        ['historique.html', 'Historique des scans'],
+        ['ocr.html', 'Documents OCR (factures)']
       ]
     },
     {
