@@ -1,3 +1,4 @@
+from .amazon_invoice import is_amazon_layout, parse_amazon_invoice
 from .invoice import is_invoice, parse_invoice
 
 
@@ -15,6 +16,7 @@ def normalize_document(raw: dict) -> dict:
     }
 
     if is_invoice(raw):
-        result.update(parse_invoice(raw))
+        parser = parse_amazon_invoice if is_amazon_layout(raw) else parse_invoice
+        result.update(parser(raw))
 
     return result

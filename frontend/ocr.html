@@ -234,11 +234,18 @@ function renderInvoice(result) {
     kv('Fournisseur', partyText(result.supplier)),
     kv('Client', partyText(result.customer)),
     kv('Code client', result.customer_code),
+    ...(result.order_number ? [
+      kv('N° de commande', result.order_number),
+      kv('Date de commande', formatDate(result.order_date)),
+      kv('Commandé par', result.ordered_by)
+    ] : []),
     kv('Total HT', money(result.subtotal)),
     kv(`TVA${result.vat_rate ? ` ${number.format(result.vat_rate)} %` : ''}`, money(result.vat)),
     kv('Total TTC', money(result.total)),
     kv('Payé', money(result.paid)),
     kv('Reste à payer', money(result.balance_due)),
+    kv('Référence de paiement', payment.reference),
+    kv('Exonération de TVA', result.vat_exemption),
     kv('IBAN', payment.iban),
     kv('BIC', payment.bic),
     kv('Communication structurée', payment.structured_communication)
@@ -247,6 +254,7 @@ function renderInvoice(result) {
 
   const checkLabels = {
     lines_match_subtotal: 'Lignes = total HT',
+    lines_match_total: 'Lignes = total facture',
     total_matches_subtotal_plus_vat: 'HT + TVA = TTC',
     structured_communication_valid: 'Communication structurée valide'
   };
@@ -267,13 +275,15 @@ function renderInvoice(result) {
     }
     const description = el('td', { text: line.description });
     if (line.note) description.append(el('div', { className: 'muted', text: `>> ${line.note}` }));
+    if (line.asin) description.append(el('div', { className: 'muted', text: `ASIN ${line.asin}` }));
+    if (typeof line.vat_rate === 'number') description.append(el('div', { className: 'muted', text: `TVA ${number.format(line.vat_rate)} %` }));
     tbody.append(el('tr', {}, description,
       el('td', { className: 'num', text: money(line.unit_price) }),
       el('td', { className: 'num', text: number.format(line.quantity) }),
       el('td', { className: 'num', text: money(line.total) })));
   });
   container.append(el('div', { className: 'table-wrap' }, el('table', {},
-    el('thead', {}, el('tr', {}, el('th', { text: 'Désignation' }), el('th', { className: 'num', text: 'P.U. HT' }), el('th', { className: 'num', text: 'Qté' }), el('th', { className: 'num', text: 'Total HT' }))),
+    el('thead', {}, el('tr', {}, el('th', { text: 'Désignation' }), el('th', { className: 'num', text: 'P.U. HT' }), el('th', { className: 'num', text: 'Qté' }), el('th', { className: 'num', text: result.line_total_basis === 'ttc' ? 'Total TTC' : 'Total HT' }))),
     tbody)));
 
   if ((result.payments || []).length) {
