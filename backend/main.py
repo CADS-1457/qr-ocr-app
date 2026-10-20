@@ -16,6 +16,9 @@ from sqlalchemy import Column, LargeBinary, delete, func, inspect, or_, update
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Field, Session, SQLModel, create_engine, select
 
+from models.ocr_job import OcrJob  # noqa: F401 (enregistre la table dans SQLModel)
+from routes.ocr import register_ocr_routes
+
 MAX_IMAGE_SIZE = 10 * 1024 * 1024
 ADMIN_TOKEN_TTL_SECONDS = 8 * 60 * 60
 AUDIT_RETENTION_DAYS = 365
@@ -847,6 +850,8 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
+
+register_ocr_routes(app, engine, current_user)
 
 
 @app.get("/api/health")
