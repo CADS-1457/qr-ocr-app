@@ -28,6 +28,8 @@
     .checks{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
     pre{max-height:360px;overflow:auto;padding:12px;background:#f8fafc;border:1px solid var(--border);border-radius:10px;white-space:pre-wrap}
     .preview{margin-top:4px}.preview iframe{display:block;width:100%;height:720px;border:1px solid var(--border);border-radius:10px;background:#f8fafc}
+    .jobs-scroll{max-height:380px;overflow-y:auto}.jobs-scroll th{position:sticky;top:0;z-index:1}
+    .confirm-dialog{width:min(440px,calc(100% - 32px));padding:22px;border:0;border-radius:16px;color:var(--text);box-shadow:0 18px 50px rgba(15,23,42,.25)}.confirm-dialog::backdrop{background:rgba(15,23,42,.55)}.confirm-dialog h2{margin:0 0 10px;color:#b91c1c}.confirm-dialog p{line-height:1.5;overflow-wrap:anywhere}.confirm-dialog .actions{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
     .preview img{display:block;max-width:100%;max-height:720px;margin:auto;border:1px solid var(--border);border-radius:10px}
     .empty{text-align:center;padding:30px;color:var(--muted)}[hidden]{display:none!important}
     @media(max-width:760px){.grid{grid-template-columns:1fr 1fr}}
@@ -69,7 +71,7 @@
       <h2 id="jobsTitle">Mes documents</h2>
       <button id="refreshButton" class="btn light" type="button">Actualiser</button>
     </div>
-    <div class="table-wrap">
+    <div class="table-wrap jobs-scroll">
       <table>
         <thead><tr><th>Date</th><th id="ownerHeader" hidden>Propriétaire</th><th>Fournisseur</th><th>Statut</th><th>Type</th><th>Facture</th><th class="num">Total TTC</th><th class="num">Confiance</th></tr></thead>
         <tbody id="jobsBody"></tbody>
@@ -90,6 +92,14 @@
     <div id="detailBody"></div>
   </section>
 </main>
+<dialog id="confirmDialog" class="confirm-dialog" aria-labelledby="confirmTitle" aria-describedby="confirmMessage">
+  <h2 id="confirmTitle">Confirmer la suppression</h2>
+  <p id="confirmMessage"></p>
+  <div class="actions">
+    <button id="cancelDelete" class="btn light" type="button">Annuler</button>
+    <button id="confirmDelete" class="btn danger" type="button">Supprimer</button>
+  </div>
+</dialog>
 <script src="auth.js"></script>
 <script>
 'use strict';
@@ -371,10 +381,27 @@ function canDelete() {
   return Boolean(currentUser) && ['admin', 'superadmin'].includes(currentUser.role);
 }
 
+function confirmDeletion(message) {
+  const dialog = $('confirmDialog');
+  $('confirmMessage').textContent = message;
+  return new Promise((resolve) => {
+    const finish = (value) => {
+      dialog.removeEventListener('cancel', onCancel);
+      if (dialog.open) dialog.close();
+      resolve(value);
+    };
+    const onCancel = () => finish(false);
+    $('cancelDelete').onclick = () => finish(false);
+    $('confirmDelete').onclick = () => finish(true);
+    dialog.addEventListener('cancel', onCancel);
+    dialog.showModal();
+  });
+}
+
 async function deleteSelected() {
   const job = jobs.find((item) => item.id === selectedId);
   if (!job || !canDelete()) return;
-  if (!window.confirm(`Supprimer définitivement « ${job.original_filename || `document ${job.id}`} » et ses données extraites ?`)) return;
+  if (!await confirmDeletion(`Supprimer définitivement « ${job.original_filename || `document ${job.id}`} » et ses données extraites ?`)) return;
 
   $('deleteButton').disabled = true;
   try {
@@ -394,7 +421,14 @@ async function deleteSelected() {
   }
 }
 
+let detailKey = null;
+
+function detailSignature(job) {
+  return JSON.stringify([job.id, job.status, job.error_message, job.confidence, job.result, canDelete()]);
+}
+
 function renderDetail(job) {
+  detailKey = detailSignature(job);
   const body = $('detailBody');
   body.replaceChildren();
   $('detailTitle').textContent = job.original_filename || `Document ${job.id}`;
@@ -447,7 +481,7 @@ async function loadJobs() {
     clearStatus($('listStatus'));
     renderJobs();
     const selected = jobs.find((job) => job.id === selectedId);
-    if (selected) renderDetail(selected);
+    if (selected && detailSignature(selected) !== detailKey) renderDetail(selected);
     schedulePolling();
   } catch (error) {
     if (currentUser) showStatus($('listStatus'), `Chargement impossible : ${error.message}`, 'error');
