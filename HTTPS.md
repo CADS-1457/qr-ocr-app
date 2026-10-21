@@ -1,5 +1,19 @@
 # HTTPS pour ocr.ca-ds.be
 
+## Mode interne (en place actuellement)
+Le DNS public de `ocr.ca-ds.be` n'existe pas : Let's Encrypt ne peut donc pas délivrer de certificat. Un certificat auto-signé (SAN `ocr.ca-ds.be` et `192.168.88.179`, 825 jours) a été placé dans `certbot/conf/live/ocr.ca-ds.be/` (ignoré par git). Pour supprimer l'avertissement du navigateur, importer `certbot/conf/live/ocr.ca-ds.be/fullchain.pem` dans « Autorités de certification racines de confiance » des postes clients.
+
+Le relais `/api/` doit conserver le préfixe (`proxy_pass http://api:8000/api/;`), comme `frontend/nginx.conf`.
+
+Pour régénérer le certificat auto-signé :
+
+```powershell
+docker run --rm -v "${PWD}\certbot\conf\live\ocr.ca-ds.be:/c" alpine/openssl req -x509 -newkey rsa:2048 -nodes -days 825 -subj "/CN=ocr.ca-ds.be/O=CADS" -addext "subjectAltName=DNS:ocr.ca-ds.be,IP:192.168.88.179" -keyout /c/privkey.pem -out /c/fullchain.pem
+docker compose -f docker-compose.yml -f docker-compose.https.yml exec nginx-https nginx -s reload
+```
+
+Les sections suivantes ne concernent que le passage à un vrai certificat Let's Encrypt (DNS public requis).
+
 Ce complément est prévu pour le projet qr-ocr-app existant, avec des services Docker nommés `frontend` et `api`.
 
 ## Prérequis
