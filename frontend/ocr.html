@@ -23,7 +23,11 @@
     td.num,th.num{text-align:right;white-space:nowrap}tr.section td{background:#f1f5f9;font-weight:700}
     #jobsBody tr{cursor:pointer}#jobsBody tr:hover{background:#f1f5f9}#jobsBody tr[aria-selected="true"]{background:#dbeafe}
     .badge{display:inline-block;padding:3px 9px;border-radius:999px;font-size:13px;font-weight:700}
-    .badge.pending,.badge.processing{background:#fef3c7;color:#92400e}.badge.completed,.badge.ok{background:#dcfce7;color:#166534}.badge.failed,.badge.ko{background:#fee2e2;color:#991b1b}
+    .badge.pending,.badge.processing{background:#fef3c7;color:#92400e}
+    .progress{position:relative;width:110px;height:8px;border-radius:999px;background:#e2e8f0;overflow:hidden}.progress span{position:absolute;top:0;bottom:0;width:40%;border-radius:999px;background:var(--primary);animation:progress-slide 1.4s ease-in-out infinite}
+    .progress-cell{display:flex;flex-direction:column;gap:4px}.analysis{margin:12px 0}.analysis .progress{width:100%;max-width:360px;margin-bottom:6px}
+    @keyframes progress-slide{0%{left:-40%}100%{left:100%}}
+    @media(prefers-reduced-motion:reduce){.progress span{animation:none;width:100%;opacity:.6}}.badge.completed,.badge.ok{background:#dcfce7;color:#166534}.badge.failed,.badge.ko{background:#fee2e2;color:#991b1b}
     .grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.kv{padding:10px;border:1px solid var(--border);border-radius:10px}.kv small{display:block;color:var(--muted);margin-bottom:3px}.kv strong{overflow-wrap:anywhere}
     .checks{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
     pre{max-height:360px;overflow:auto;padding:12px;background:#f8fafc;border:1px solid var(--border);border-radius:10px;white-space:pre-wrap}
@@ -156,6 +160,19 @@ function badge(label, kind) {
   return el('span', { className: `badge ${kind}`, text: label });
 }
 
+function progressBar(label) {
+  const bar = el('div', { className: 'progress', attrs: { role: 'progressbar', 'aria-label': label, 'aria-busy': 'true' } }, el('span'));
+  bar.firstChild.style.animationDelay = `-${Date.now() % 1400}ms`;
+  return bar;
+}
+
+function statusCell(job) {
+  if (job.status === 'processing') {
+    return el('td', {}, el('div', { className: 'progress-cell' }, progressBar('Analyse en cours'), el('small', { className: 'muted', text: 'Analyse…' })));
+  }
+  return el('td', {}, badge(STATUS_LABELS[job.status] || job.status, job.status));
+}
+
 function updateAuthState() {
   const signedIn = Boolean(currentUser);
   $('loginForm').hidden = signedIn;
@@ -212,7 +229,7 @@ function renderJobs() {
     if (admin) cells.push(el('td', { text: job.owner_username || `#${job.owner_id}` }));
     cells.push(
       supplierCell(job),
-      el('td', {}, badge(STATUS_LABELS[job.status] || job.status, job.status)),
+      statusCell(job),
       el('td', { text: TYPE_LABELS[job.document_type] || job.document_type || '—' }),
       el('td', { text: result.invoice_number || '—' }),
       el('td', { className: 'num', text: money(result.total) }),
@@ -442,7 +459,7 @@ function renderDetail(job) {
     return;
   }
   if (job.status !== 'completed' || !job.result) {
-    body.append(el('div', { className: 'status info', text: 'Analyse en cours…' }));
+    body.append(el('div', { className: 'analysis' }, progressBar('Analyse en cours'), el('small', { className: 'muted', text: job.status === 'pending' ? 'En attente de traitement…' : 'Lecture et extraction du document…' })));
     $('downloadButton').hidden = true;
     return;
   }
