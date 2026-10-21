@@ -16,7 +16,8 @@ services:
       - default
 
   certbot:
-    image: certbot/certbot:latest
+    image: certbot/dns-ovh:latest
     volumes:
       - ./certbot/www:/var/www/certbot
       - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/ovh.ini:/etc/ovh.ini:ro

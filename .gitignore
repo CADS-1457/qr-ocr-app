@@ -1,4 +1,4 @@
-# Environnement Python
+ï»¿# Environnement Python
 venv/
 .venv/
 **/venv/
@@ -38,6 +38,7 @@ Desktop.ini
 .cache/
 .paddlex/
 
-# Certificats Let's Encrypt (clés privées)
+# Certificats Let's Encrypt (cles privees)
 certbot/conf/
 certbot/www/
+certbot/ovh.ini
