@@ -37,3 +37,7 @@ Desktop.ini
 # Cache OCR
 .cache/
 .paddlex/
+
+# Certificats Let's Encrypt (clés privées)
+certbot/conf/
+certbot/www/
