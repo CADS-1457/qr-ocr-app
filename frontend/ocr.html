@@ -46,7 +46,7 @@
 <main class="container">
   <section class="card">
     <div class="header">
-      <div><h1>Documents OCR</h1><div class="muted">Envoyez une facture (image ou PDF) : le texte est lu puis les champs sont extraits automatiquement.</div></div>
+      <div><h1>Documents OCR</h1><div class="muted">Envoyez une facture ou une note de crédit (image ou PDF) : le texte est lu puis les champs sont extraits automatiquement.</div></div>
     </div>
     <div id="authBar" class="auth-bar" hidden>
       <strong id="signedInAs"></strong>
@@ -77,7 +77,7 @@
     </div>
     <div class="table-wrap jobs-scroll">
       <table>
-        <thead><tr><th>Date</th><th id="ownerHeader" hidden>Propriétaire</th><th>Fournisseur</th><th>Statut</th><th>Type</th><th>Facture</th><th class="num">Total TTC</th><th class="num">Confiance</th></tr></thead>
+        <thead><tr><th>Date</th><th id="ownerHeader" hidden>Propriétaire</th><th>Fournisseur</th><th>Statut</th><th>Type</th><th>N° document</th><th class="num">Total TTC</th><th class="num">Confiance</th></tr></thead>
         <tbody id="jobsBody"></tbody>
       </table>
     </div>
@@ -112,7 +112,7 @@ const API = `${window.AppAuth.API_BASE}/api`;
 const $ = (id) => document.getElementById(id);
 const POLL_DELAY = 3000;
 const STATUS_LABELS = { pending: 'En attente', processing: 'En cours', completed: 'Terminé', failed: 'Échec' };
-const TYPE_LABELS = { invoice: 'Facture', generic: 'Document', purchase_order: 'Bon de commande' };
+const TYPE_LABELS = { invoice: 'Facture', credit_note: 'Note de crédit', generic: 'Document', purchase_order: 'Bon de commande' };
 
 let currentUser = window.AppAuth.user();
 let jobs = [];
@@ -271,15 +271,17 @@ function renderInvoice(result) {
   const container = el('div');
   const payment = result.payment || {};
 
+  const isCredit = result.document_type === 'credit_note';
   const addSection = (title, ...items) => {
     container.append(el('h3', { text: title }));
     container.append(el('div', { className: 'grid' }, ...items));
   };
 
-  addSection('Facture',
-    kv('Numéro de facture', result.invoice_number),
-    kv('Date de facturation', formatDate(result.invoice_date)),
-    kv('Échéance', formatDate(result.due_date)));
+  addSection(isCredit ? 'Note de crédit' : 'Facture',
+    kv(isCredit ? 'Numéro de la note de crédit' : 'Numéro de facture', result.invoice_number),
+    ...(isCredit ? [kv('Facture corrigée', result.corrected_invoice)] : []),
+    kv(isCredit ? 'Date de la note de crédit' : 'Date de facturation', formatDate(result.invoice_date)),
+    ...(isCredit ? [] : [kv('Échéance', formatDate(result.due_date))]));
 
   addSection('Fournisseur',
     kv('Nom et adresse', partyText(result.supplier)),
@@ -465,10 +467,10 @@ function renderDetail(job) {
   }
 
   $('downloadButton').hidden = false;
-  if (job.result.document_type === 'invoice') {
+  if (['invoice', 'credit_note'].includes(job.result.document_type)) {
     body.append(renderInvoice(job.result));
   } else {
-    body.append(el('div', { className: 'status info', text: 'Ce document n’a pas été reconnu comme une facture : seul le texte brut est disponible.' }));
+    body.append(el('div', { className: 'status info', text: 'Ce document n’a pas été reconnu comme une facture ou une note de crédit : seul le texte brut est disponible.' }));
   }
   body.append(el('h3', { text: 'Texte brut' }), el('pre', { text: job.result.raw_text || '(aucun texte détecté)' }));
 }

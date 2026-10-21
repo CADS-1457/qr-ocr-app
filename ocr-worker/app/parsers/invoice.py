@@ -7,7 +7,15 @@ AMOUNT_RE = re.compile(
 QUANTITY_RE = re.compile(r"^\d+(?:[.,]\d+)?$")
 DATE_RE = re.compile(r"(\d{2})[/.-](\d{2})[/.-](\d{4})")
 INVOICE_NUMBER_RE = re.compile(
-    r"\bFacture\s+(?:n[°o]\s*)?:?\s*([A-Z0-9][A-Z0-9\-/.]*\d[A-Z0-9\-/.]*)",
+    r"\bFacture\s+(?:avoir\s+)?(?:n[°o]\s*)?:?\s*([A-Z0-9][A-Z0-9\-/.]*\d[A-Z0-9\-/.]*)",
+    re.IGNORECASE,
+)
+CREDIT_NOTE_RE = re.compile(
+    r"\b(?:Facture\s+avoir|Note\s+de\s+cr[ée]dit|Avoir)\s+(?:n[°o]\s*)?:?\s*([A-Z0-9][A-Z0-9\-/.]*\d[A-Z0-9\-/.]*)",
+    re.IGNORECASE,
+)
+CORRECTED_INVOICE_RE = re.compile(
+    r"(?:Correction\s+facture|Avoir\s+sur\s+facture)\s*:?\s*([A-Z0-9][A-Z0-9\-/.]*\d[A-Z0-9\-/.]*)",
     re.IGNORECASE,
 )
 VAT_RE = re.compile(r"\bBE\s?[01]\d{3}[\s.]?\d{3}[\s.]?\d{3}\b")
@@ -290,7 +298,10 @@ def parse_invoice(raw: dict) -> dict:
     lines, warnings = extract_lines(rows)
     totals = extract_totals(rows)
 
-    number = INVOICE_NUMBER_RE.search(row_text)
+    number = CREDIT_NOTE_RE.search(row_text)
+    is_credit_note = number is not None
+    number = number or INVOICE_NUMBER_RE.search(row_text)
+    corrected = CORRECTED_INVOICE_RE.search(row_text) if is_credit_note else None
     invoice_date = re.search(r"Date\s+(?:de\s+)?facturation\s*:?\s*(.+)", row_text, re.IGNORECASE)
     due_date = re.search(r"Date\s+[ée]ch[ée]ance\s*:?\s*(.+)", row_text, re.IGNORECASE)
     customer_code = re.search(r"Code\s+client\s*:?\s*(\S+)", row_text, re.IGNORECASE)
@@ -327,7 +338,8 @@ def parse_invoice(raw: dict) -> dict:
         )
 
     return {
-        "document_type": "invoice",
+        "document_type": "credit_note" if is_credit_note else "invoice",
+        "corrected_invoice": corrected.group(1) if corrected else None,
         "invoice_number": number.group(1) if number else None,
         "invoice_date": parse_date(invoice_date.group(1)) if invoice_date else None,
         "due_date": parse_date(due_date.group(1)) if due_date else None,
