@@ -42,3 +42,4 @@ Desktop.ini
 certbot/conf/
 certbot/www/
 certbot/ovh.ini
+certbot/ovh.ini.pending
