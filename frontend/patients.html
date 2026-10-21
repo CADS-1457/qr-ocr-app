@@ -76,6 +76,7 @@
       </div>
       <div class="actions" style="margin-top:14px">
         <button id="saveButton" class="btn" type="submit">Enregistrer les modifications</button>
+        <a id="newDispenseLink" class="btn secondary" href="delivrance.html">Nouvelle délivrance</a>
         <button id="cancelButton" class="btn light" type="button">Annuler</button>
       </div>
     </form>
@@ -216,6 +217,9 @@ function selectPatient(patient) {
   $('selectedPatientSummary').textContent =
     `Patient #${patient.id} — fiche créée le ${formatDate(patient.created_at.slice(0, 10))}.`;
   $('editCard').hidden = false;
+  const dispenseUrl = new URL('delivrance.html', window.location.href);
+  dispenseUrl.searchParams.set('patient_id', String(patient.id));
+  $('newDispenseLink').href = dispenseUrl.href;
   $('formStatus').className = 'status';
   renderPatients();
 }
