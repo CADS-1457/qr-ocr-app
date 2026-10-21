@@ -231,7 +231,9 @@ function renderJobs() {
       supplierCell(job),
       statusCell(job),
       el('td', { text: TYPE_LABELS[job.document_type] || job.document_type || '—' }),
-      el('td', { text: result.invoice_number || '—' }),
+      el('td', {}, document.createTextNode(result.invoice_number || '—'), ...((job.duplicate_of || []).length
+        ? [document.createTextNode(' '), el('span', { className: 'badge ko', text: 'Doublon', attrs: { title: `Même document que : ${job.duplicate_of.map((id) => `#${id}`).join(', ')}` } })]
+        : [])),
       el('td', { className: 'num', text: money(result.total) }),
       el('td', { className: 'num', text: typeof job.confidence === 'number' ? `${Math.round(job.confidence * 100)} %` : '—' })
     );
@@ -443,7 +445,7 @@ async function deleteSelected() {
 let detailKey = null;
 
 function detailSignature(job) {
-  return JSON.stringify([job.id, job.status, job.error_message, job.confidence, job.result, canDelete()]);
+  return JSON.stringify([job.id, job.status, job.error_message, job.confidence, job.result, job.duplicate_of, canDelete()]);
 }
 
 function renderDetail(job) {
@@ -467,6 +469,10 @@ function renderDetail(job) {
   }
 
   $('downloadButton').hidden = false;
+  if ((job.duplicate_of || []).length) {
+    const label = job.result.document_type === 'credit_note' ? 'cette note de crédit' : 'cette facture';
+    body.append(el('div', { className: 'status error', text: `⚠ Doublon : ${label} (${job.result.invoice_number}) a déjà été analysée — document n° ${job.duplicate_of.join(', ')}.` }));
+  }
   if (['invoice', 'credit_note'].includes(job.result.document_type)) {
     body.append(renderInvoice(job.result));
   } else {

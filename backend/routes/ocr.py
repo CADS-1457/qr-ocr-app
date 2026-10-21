@@ -104,9 +104,54 @@ def owner_names(session: Session, owner_ids: set) -> dict:
     return {row[0]: row[1] for row in rows}
 
 
+def normalize_key(value) -> str:
+    return "".join(ch for ch in str(value or "").upper() if ch.isalnum())
+
+
+def find_duplicates(session: Session, user) -> dict:
+    """Retourne {job_id: [ids des autres documents identiques]}."""
+    sql = (
+        "SELECT id, owner_id, document_type, "
+        "structured_data::json->>'invoice_number', "
+        "structured_data::json->'supplier'->>'vat', "
+        "structured_data::json->'supplier'->>'name' "
+        "FROM ocrjob "
+        "WHERE status = 'completed' AND structured_data IS NOT NULL "
+        "AND document_type IN ('invoice', 'credit_note')"
+    )
+    params = {}
+
+    if not is_admin(user):
+        sql += " AND owner_id = :owner"
+        params["owner"] = user.id
+
+    groups = {}
+
+    for job_id, _owner, doc_type, number, vat, name in session.execute(
+        text(sql), params
+    ).all():
+        if not normalize_key(number):
+            continue
+
+        key = (
+            doc_type,
+            normalize_key(number),
+            normalize_key(vat) or normalize_key(name),
+        )
+        groups.setdefault(key, []).append(job_id)
+
+    return {
+        job_id: sorted(i for i in ids if i != job_id)
+        for ids in groups.values()
+        if len(ids) > 1
+        for job_id in ids
+    }
+
+
 def job_to_dict(
     job: OcrJob,
     owner_username: Optional[str] = None,
+    duplicates: Optional[list] = None,
 ) -> dict:
     structured_data = None
 
@@ -132,6 +177,7 @@ def job_to_dict(
         "started_at": job.started_at,
         "completed_at": job.completed_at,
         "result": structured_data,
+        "duplicate_of": duplicates or [],
     }
 
 
@@ -330,8 +376,14 @@ def register_ocr_routes(
                 {job.owner_id for job in jobs},
             )
 
+            duplicates = find_duplicates(session, user)
+
             return [
-                job_to_dict(job, names.get(job.owner_id))
+                job_to_dict(
+                    job,
+                    names.get(job.owner_id),
+                    duplicates.get(job.id),
+                )
                 for job in jobs
             ]
 
@@ -354,8 +406,13 @@ def register_ocr_routes(
                 )
 
             names = owner_names(session, {job.owner_id})
+            duplicates = find_duplicates(session, user)
 
-            return job_to_dict(job, names.get(job.owner_id))
+            return job_to_dict(
+                job,
+                names.get(job.owner_id),
+                duplicates.get(job.id),
+            )
 
     @router.get("/jobs/{job_id}/file")
     def get_ocr_job_file(
