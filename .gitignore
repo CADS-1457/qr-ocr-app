@@ -1,39 +1,55 @@
-# Environnement Python
-venv/
-.venv/
-**/venv/
-**/.venv/
+﻿# ==========================================
+# QR-OCR - Git exclusions
+# ==========================================
 
-# Python
-__pycache__/
-**/__pycache__/
-*.py[cod]
-
-# Variables sensibles
+# Environment / secrets
 .env
 .env.*
 !.env.example
 
-# Base SQLite locale
-*.db
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+venv/
+.venv/
+backe*d/venv/
+
+# VS Code / IDE
+.vscode/
+*idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+#*Logs / runtime
+*.log
+logs/
+tmp/
+te*p/
+
+# Local databases / backups
+*.*b
 *.sqlite
 *.sqlite3
+*.dump
+*.back*p
 
-# Uploads
-uploads/
-backend/uploads/
+# Certificates and private keys*certbot/
+*.pem
+*.key
+*.pfx
+*.p12
 
-# IDE
-.vscode/
-.idea/
+* PostgreSQL local persistence
+post*res-data/
+pgdata/
 
-# Windows
-Thumbs.db
-Desktop.ini
+# Runtime files*uploads/
+output/
+outputs/
 
-# macOS
-.DS_Store
-
-# Cache OCR
-.cache/
-.paddlex/
+# Integ*ation packages already merged into*main project
+qr-ocr-agenda-stock-a*don/
+qr-ocr-agenda-stock-addon-v2/*

@@ -47,6 +47,7 @@
       <div class="filters">
         <div class="field"><label for="userName">Nom d'utilisateur</label><input id="userName" type="text" maxlength="255" required autocomplete="off"></div>
         <div class="field"><label for="userPassword">Mot de passe</label><input id="userPassword" type="password" minlength="12" autocomplete="new-password" placeholder="12 caractères minimum."></div>
+        <div class="field" id="userAgendaField" hidden><label for="userAgenda">Module Agenda (SuperAdmin)</label><select id="userAgenda"><option value="false">Non activé</option><option value="true">Activé</option></select></div>
         <div class="field"><label for="userRole">Rôle</label><select id="userRole"><option value="user">Utilisateur — consulter et créer</option><option value="admin">Administrateur — tous les droits</option></select></div>
         <div id="userActiveField" class="field" hidden><label for="userActive">État du compte</label><select id="userActive"><option value="true">Actif</option><option value="false">Désactivé</option></select></div>
       </div>
@@ -130,10 +131,17 @@ async function loadUsers() {
       const state = document.createElement('span');
       state.className = `badge${user.active ? '' : ' off'}`;
       state.textContent = user.active ? 'Actif' : 'Désactivé';
-      meta.append(name, role, state);
+      const agenda = document.createElement('span');
+      agenda.className = `badge${user.agenda_enabled ? '' : ' off'}`;
+      agenda.textContent = user.agenda_enabled ? 'Agenda' : 'Sans agenda';
+      meta.append(name, role, state, agenda);
       const actions = document.createElement('div');
       actions.className = 'actions';
       const edit = button('Modifier', 'btn secondary small', () => editUser(user));
+      if (currentUser?.role === 'superadmin') {
+        actions.append(button(user.agenda_enabled ? 'Retirer l’agenda' : 'Activer l’agenda', 'btn light small',
+          () => updateUser(user.id, { agenda_enabled: !user.agenda_enabled })));
+      }
       const toggle = button(user.active ? 'Désactiver' : 'Activer', 'btn light small', () => updateUser(user.id, { active: !user.active }));
       const remove = button('Supprimer', 'btn danger small', () => deleteUser(user));
       remove.disabled = user.id === currentUser.id;
@@ -160,6 +168,7 @@ function resetUserForm() {
   $('userForm').reset();
   $('userId').value = '';
   $('userRole').value = 'user';
+  $('userAgenda').value = 'false';
   $('userActive').value = 'true';
   $('userActiveField').hidden = true;
   $('userPassword').required = true;
@@ -175,6 +184,7 @@ function editUser(user) {
   $('userPassword').required = false;
   $('userPassword').placeholder = 'Laisser vide pour conserver le mot de passe.';
   $('userRole').value = user.role;
+  $('userAgenda').value = String(Boolean(user.agenda_enabled));
   $('userActive').value = String(user.active);
   $('userActiveField').hidden = false;
   $('saveUser').textContent = 'Enregistrer les changements';
@@ -207,6 +217,7 @@ async function saveUser(event) {
   const userId = $('userId').value;
   const payload = { username: $('userName').value.trim(), role: $('userRole').value };
   if (userId) payload.active = $('userActive').value === 'true';
+  if (currentUser?.role === 'superadmin') payload.agenda_enabled = $('userAgenda').value === 'true';
   if ($('userPassword').value) payload.password = $('userPassword').value;
   if (!userId && !payload.password) { userStatus('Un mot de passe est requis pour créer un compte.', 'error'); return; }
   $('saveUser').disabled = true;
@@ -239,6 +250,7 @@ async function initialize() {
     }
   }
   setAdminState();
+  $('userAgendaField').hidden = currentUser?.role !== 'superadmin';
   if (!currentUser) authStatus('Connectez-vous avec un compte administrateur.', 'info');
   else if (!isAdmin()) authStatus('Accès réservé aux administrateurs.', 'error');
   else await loadUsers();

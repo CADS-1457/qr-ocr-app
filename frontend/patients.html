@@ -16,6 +16,8 @@
     .login-grid{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end;margin-top:16px}
     .field{min-width:0}.field label{display:block;margin:0 0 6px;font-size:14px;font-weight:700}
     .field input,.field select{width:100%;min-height:44px;padding:10px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;font:inherit}
+    .form-section{margin:22px 0 4px;color:var(--primary);font-size:17px}.form-hint{margin:0 0 12px;font-size:14px}
+    .consent-row{display:flex;flex-wrap:wrap;gap:12px 24px;margin-top:14px}.checkbox{display:flex;align-items:center;gap:8px;font-weight:700;cursor:pointer}.checkbox input{width:auto;min-height:auto}
     .form-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
     .status{display:none;margin-top:14px;padding:12px;border-radius:10px;line-height:1.4}.status.info{display:block;background:#dbeafe;color:#1e40af}.status.success{display:block;background:#dcfce7;color:#166534}.status.error{display:block;background:#fee2e2;color:#991b1b}
     .table-wrap{overflow:auto;border:1px solid var(--border);border-radius:12px}table{width:100%;min-width:620px;border-collapse:collapse}th,td{padding:11px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:top}th{background:var(--primary);color:#fff;white-space:nowrap}
@@ -32,7 +34,7 @@
 <main class="container">
   <section class="card">
     <div class="header">
-      <div><h1>Fiche patient</h1><div class="muted">Recherchez un patient et mettez à jour son nom, prénom ou sa date de naissance.</div></div>
+      <div><h1>Fiche patient</h1><div class="muted">Recherchez un patient et mettez à jour son identité, ses coordonnées de contact, sa langue et ses consentements de communication.</div></div>
     </div>
     <div id="authBar" class="auth-bar" hidden>
       <strong id="signedInAs"></strong>
@@ -53,12 +55,12 @@
     </div>
     <div class="field" style="margin:16px 0">
       <label for="searchInput">Rechercher un patient</label>
-      <input id="searchInput" type="search" placeholder="Nom, prénom ou date de naissance">
+      <input id="searchInput" type="search" placeholder="Nom, prénom, date de naissance, mobile ou e-mail">
     </div>
     <div id="listStatus" class="status" aria-live="polite"></div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Prénom</th><th>Nom</th><th>Date de naissance</th><th class="history-cell">Historique</th><th class="link-cell">Lien</th></tr></thead>
+        <thead><tr><th>Prénom</th><th>Nom</th><th>Date de naissance</th><th>Mobile</th><th>E-mail</th><th class="history-cell">Historique</th><th class="link-cell">Lien</th></tr></thead>
         <tbody id="patientRows"></tbody>
       </table>
       <div id="emptyState" class="empty" hidden>Aucun patient ne correspond à la recherche.</div>
@@ -73,6 +75,26 @@
         <div class="field"><label for="firstName">Prénom</label><input id="firstName" type="text" maxlength="255" autocomplete="given-name" required></div>
         <div class="field"><label for="lastName">Nom</label><input id="lastName" type="text" maxlength="255" autocomplete="family-name" required></div>
         <div class="field"><label for="birthDate">Date de naissance</label><input id="birthDate" type="date" required></div>
+      </div>
+      <h3 class="form-section">Coordonnées et communication</h3>
+      <p class="muted form-hint">Ces informations servent aux rappels de rendez-vous de l’agenda. Les consentements sont désactivés par défaut.</p>
+      <div class="form-grid">
+        <div class="field"><label for="mobile">Mobile</label><input id="mobile" type="tel" maxlength="50" autocomplete="tel" placeholder="+32 470 12 34 56"></div>
+        <div class="field"><label for="email">E-mail</label><input id="email" type="email" maxlength="255" autocomplete="email" placeholder="prenom.nom@exemple.be"></div>
+        <div class="field">
+          <label for="language">Langue de communication</label>
+          <select id="language">
+            <option value="">Non renseignée</option>
+            <option value="fr">Français</option>
+            <option value="nl">Néerlandais</option>
+            <option value="de">Allemand</option>
+            <option value="en">Anglais</option>
+          </select>
+        </div>
+      </div>
+      <div class="consent-row">
+        <label class="checkbox"><input id="smsConsent" type="checkbox"> Le patient accepte de recevoir des SMS</label>
+        <label class="checkbox"><input id="emailConsent" type="checkbox"> Le patient accepte de recevoir des e-mails</label>
       </div>
       <div class="actions" style="margin-top:14px">
         <button id="saveButton" class="btn" type="submit">Enregistrer les modifications</button>
@@ -159,7 +181,7 @@ function updateAuthState() {
 function renderPatients() {
   const query = normalize($('searchInput').value.trim());
   const matches = patients.filter((patient) =>
-    normalize(`${patient.prenom} ${patient.nom} ${patient.date_naissance}`).includes(query)
+    normalize(`${patient.prenom} ${patient.nom} ${patient.date_naissance} ${patient.mobile || ''} ${patient.email || ''}`).includes(query)
   );
   $('patientRows').replaceChildren();
   $('emptyState').hidden = matches.length > 0;
@@ -173,7 +195,7 @@ function renderPatients() {
     const firstNameCell = document.createElement('td');
     firstNameCell.textContent = patient.prenom;
     row.append(firstNameCell);
-    [patient.nom, formatDate(patient.date_naissance)].forEach((value) => {
+    [patient.nom, formatDate(patient.date_naissance), patient.mobile || '—', patient.email || '—'].forEach((value) => {
       const cell = document.createElement('td');
       cell.textContent = value;
       row.append(cell);
@@ -213,6 +235,11 @@ function selectPatient(patient) {
   $('firstName').value = patient.prenom;
   $('lastName').value = patient.nom;
   $('birthDate').value = patient.date_naissance;
+  $('mobile').value = patient.mobile || '';
+  $('email').value = patient.email || '';
+  $('language').value = patient.language || '';
+  $('smsConsent').checked = Boolean(patient.sms_consent);
+  $('emailConsent').checked = Boolean(patient.email_consent);
   $('selectedPatientSummary').textContent =
     `Patient #${patient.id} — fiche créée le ${formatDate(patient.created_at.slice(0, 10))}.`;
   $('editCard').hidden = false;
@@ -268,7 +295,12 @@ async function savePatient(event) {
       body: JSON.stringify({
         prenom: $('firstName').value.trim(),
         nom: $('lastName').value.trim(),
-        date_naissance: $('birthDate').value
+        date_naissance: $('birthDate').value,
+        mobile: $('mobile').value.trim() || null,
+        email: $('email').value.trim() || null,
+        language: $('language').value || null,
+        sms_consent: $('smsConsent').checked,
+        email_consent: $('emailConsent').checked
       })
     });
     if (response.status === 404) {

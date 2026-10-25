@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Agenda et parcours patient</title>
+  <link rel="stylesheet" href="app-shell.css">
+  <link rel="stylesheet" href="agenda/agenda.css">
+  <script src="auth.js" defer></script>
+  <script src="app-navigation.js" defer></script>
+  <script src="agenda/agenda.js" defer></script>
+  <script src="agenda/dialogs.js" defer></script>
+  <script src="agenda/access.js" defer></script>
+</head>
+<body>
+  <main class="agenda-page">
+    <div id="authBar" class="auth-bar" hidden>
+      <strong id="signedInAs"></strong>
+      <button id="logoutButton" class="secondary" type="button">Déconnexion</button>
+    </div>
+    <form id="loginForm" class="login-grid">
+      <div class="field"><label for="loginUsername">Utilisateur</label><input id="loginUsername" autocomplete="username" required></div>
+      <div class="field"><label for="loginPassword">Mot de passe</label><input id="loginPassword" type="password" autocomplete="current-password" required></div>
+      <button id="loginButton" type="submit">Connexion</button>
+    </form>
+    <div id="authStatus" class="status" aria-live="polite"></div>
+    <header>
+      <div>
+        <h1>Agenda et parcours patient</h1>
+        <p>Rendez-vous, transferts et suivi du parcours de soins.</p>
+      </div>
+      <label for="day">Journée<input id="day" type="date"></label>
+      <button id="reload" type="button">Actualiser</button>
+      <button id="newAppointment" type="button">Nouveau rendez-vous</button>
+      <button id="configuration" type="button" hidden>Configurer</button>
+      <a class="button-link" href="agenda-calendrier.html">Vue calendrier</a>
+    </header>
+    <p id="message" role="status" aria-live="polite"></p>
+    <section aria-labelledby="boardTitle">
+      <h2 id="boardTitle">Rendez-vous du jour</h2>
+      <div id="board" class="board"></div>
+    </section>
+  </main>
+
+  <dialog id="appointmentDialog">
+    <form id="appointmentForm">
+      <h2>Nouveau rendez-vous</h2>
+      <label>Patient<select id="patient" required></select></label>
+      <label>Type<select id="appointmentType"></select></label>
+      <label>Salle<select id="appointmentRoom" required></select></label>
+      <label>Médecin<select id="doctor"></select></label>
+      <label>Opérateur<select id="operator"></select></label>
+      <label>Début<input id="startsAt" type="datetime-local" required></label>
+      <label>Fin<input id="endsAt" type="datetime-local" required></label>
+      <label>Téléphone de rappel (facultatif)<input id="phone" type="tel" maxlength="100"></label>
+      <label>Notes<textarea id="notes" maxlength="4000"></textarea></label>
+      <div class="actions">
+        <button type="button" data-close="appointmentDialog">Annuler</button>
+        <button type="submit">Créer</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="transferDialog">
+    <form id="transferForm">
+      <h2>Transférer le patient</h2>
+      <input type="hidden" id="appointmentId">
+      <label>Destination<select id="location" required></select></label>
+      <label>Nouveau statut
+        <select id="state">
+          <option value="PRESENT">Présent</option>
+          <option value="WAITING">En attente</option>
+          <option value="IN_PROGRESS">En cours</option>
+          <option value="RECOVERY">Réveil</option>
+          <option value="BILLING">Facturation</option>
+          <option value="COMPLETED">Terminé</option>
+        </select>
+      </label>
+      <label>Commentaire de transmission<textarea id="handover" maxlength="4000"></textarea></label>
+      <label>Commentaire salle de réveil<textarea id="recovery" maxlength="4000"></textarea></label>
+      <label>Instructions de sortie<textarea id="discharge" maxlength="8000"></textarea></label>
+      <fieldset>
+        <legend>Consommations de stock</legend>
+        <div id="consumptions"></div>
+      </fieldset>
+      <label class="checkbox"><input id="followup" type="checkbox"> Visite post-op à replanifier</label>
+      <label id="followUpTypeField" hidden>Type du suivi<select id="followUpType"></select></label>
+      <label id="followUpDateField" hidden>Date du suivi<input id="followUpDate" type="date"></label>
+      <div class="actions">
+        <button type="button" data-close="transferDialog">Annuler</button>
+        <button type="submit">Transférer</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="configurationDialog">
+    <form id="configurationForm">
+      <h2>Configuration de l’agenda</h2>
+      <fieldset>
+        <legend>Ajouter une salle</legend>
+        <label>Nom<input id="roomName" maxlength="255" required></label>
+        <label>Type
+          <select id="roomKind">
+            <option value="WAITING">Attente</option>
+            <option value="CONSULTATION">Consultation</option>
+            <option value="OPERATING">Opération</option>
+            <option value="RECOVERY">Réveil</option>
+            <option value="BILLING">Facturation</option>
+            <option value="OTHER">Autre</option>
+          </select>
+        </label>
+        <button type="button" id="addRoom">Ajouter la salle</button>
+      </fieldset>
+      <fieldset>
+        <legend>Modifier une salle</legend>
+        <label>Salle<select id="editRoom"></select></label>
+        <label>Nom<input id="editRoomName" maxlength="255"></label>
+        <label>Type
+          <select id="editRoomKind">
+            <option value="WAITING">Attente</option>
+            <option value="CONSULTATION">Consultation</option>
+            <option value="OPERATING">Opération</option>
+            <option value="RECOVERY">Réveil</option>
+            <option value="BILLING">Facturation</option>
+            <option value="OTHER">Autre</option>
+          </select>
+        </label>
+        <label>Couleur<input id="editRoomColor" type="color" value="#64748b"></label>
+        <label>Capacité<input id="editRoomCapacity" type="number" min="1" value="1"></label>
+        <button type="button" id="saveRoom">Enregistrer la salle</button>
+      </fieldset>
+      <fieldset>
+        <legend>Ajouter un type de rendez-vous</legend>
+        <label>Nom<input id="typeName" maxlength="255" required></label>
+        <label>Durée (minutes)<input id="typeDuration" type="number" min="1" max="1440" value="30" required></label>
+        <button type="button" id="addType">Ajouter le type</button>
+      </fieldset>
+      <fieldset>
+        <legend>Modifier un type de rendez-vous</legend>
+        <label>Type<select id="editType"></select></label>
+        <label>Nom<input id="editTypeName" maxlength="255"></label>
+        <label>Durée (minutes)<input id="editTypeDuration" type="number" min="1" max="1440" value="30"></label>
+        <label>Couleur<input id="editTypeColor" type="color" value="#2563eb"></label>
+        <button type="button" id="saveType">Enregistrer le type</button>
+      </fieldset>
+      <fieldset>
+        <legend>Ajouter une ressource</legend>
+        <label>Type<select id="resourceKind"><option value="DOCTOR">Médecin</option><option value="OPERATOR">Opérateur</option></select></label>
+        <label>Nom<input id="resourceName" maxlength="255" required></label>
+        <button type="button" id="addResource">Ajouter la ressource</button>
+      </fieldset>
+      <fieldset>
+        <legend>Modifier une ressource</legend>
+        <label>Ressource<select id="editResource"></select></label>
+        <label>Type<select id="editResourceKind"><option value="DOCTOR">Médecin</option><option value="OPERATOR">Opérateur</option></select></label>
+        <label>Nom<input id="editResourceName" maxlength="255"></label>
+        <button type="button" id="saveResource">Enregistrer la ressource</button>
+      </fieldset>
+      <fieldset>
+        <legend>Ajouter un emplacement de stock</legend>
+        <label>Nom<input id="stockLocationName" maxlength="255" required></label>
+        <label>Dans l’emplacement<select id="stockLocationParent"></select></label>
+        <label>Salles desservies<select id="stockLocationRoom" multiple size="4"></select></label>
+        <p class="hint">Ctrl/Cmd + clic pour choisir plusieurs salles. Un sous-emplacement est aussi accessible depuis les salles de son parent.</p>
+        <button type="button" id="addStockLocation">Ajouter l’emplacement</button>
+      </fieldset>
+      <fieldset>
+        <legend>Salles d’un emplacement existant</legend>
+        <label>Emplacement<select id="editLocation"></select></label>
+        <label>Salles desservies<select id="editLocationRooms" multiple size="4"></select></label>
+        <button type="button" id="saveLocationRooms">Enregistrer les salles</button>
+      </fieldset>
+    </form>
+  </dialog>
+</body>
+</html>

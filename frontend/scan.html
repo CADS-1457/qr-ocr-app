@@ -62,6 +62,7 @@
     </style>
     <link rel="stylesheet" href="app-shell.css">
     <script src="app-navigation.js" defer></script>
+  <script src="dialog-close.js" defer></script>
 </head>
 <body data-auth-required="true">
 <div class="container">
@@ -150,7 +151,6 @@
 <dialog id="lotQrDialog" class="qr-dialog" aria-labelledby="lotQrTitle">
     <div class="qr-dialog-header">
         <h2 id="lotQrTitle">Scanner le numéro de lot</h2>
-        <button id="closeLotQrButton" class="secondary qr-dialog-close" type="button">Fermer</button>
     </div>
     <div class="qr-camera-field">
         <label for="lotQrCamera">Caméra</label>
@@ -184,7 +184,6 @@ const scanList = $('scanList');
 const scanLotButton = $('scanLotButton');
 const lotQrDialog = $('lotQrDialog');
 const lotQrStatus = $('lotQrStatus');
-const closeLotQrButton = $('closeLotQrButton');
 const lotQrCameraSelect = $('lotQrCamera');
 const authUsername = $('authUsername');
 const authPassword = $('authPassword');
@@ -450,7 +449,6 @@ lotQrCameraSelect.addEventListener('change', () => {
     startLotQrCamera(lotQrCameraSelect.value);
 });
 
-closeLotQrButton.addEventListener('click', closeLotQrScanner);
 lotQrDialog.addEventListener('cancel', (event) => {
     event.preventDefault();
     closeLotQrScanner();

@@ -3,6 +3,13 @@
 (() => {
   const groups = [
     {
+      label: 'Agenda',
+      links: [
+        ['agenda-calendrier.html', 'Agenda'],
+        ['agenda.html', 'Agenda et parcours patient']
+      ]
+    },
+    {
       label: 'Scanner et historique',
       links: [
         ['scan.html', 'Scanner QR/OCR'],
@@ -64,11 +71,24 @@
   if (currentPage === 'index.html') homeLink.setAttribute('aria-current', 'page');
   navigation.append(homeLink);
 
+  const agendaPages = ['agenda.html', 'agenda-calendrier.html'];
+  // Sans connexion, le lien reste visible pour mener à l'écran de connexion.
+  const showAgenda = !user || window.AppAuth?.canUseAgenda(user);
+
+  // Le droit Agenda peut changer côté SuperAdmin : on resynchronise le profil puis on recharge une fois.
+  if (user && window.AppAuth?.refreshUser) {
+    window.AppAuth.refreshUser().then((fresh) => {
+      if (fresh && window.AppAuth.canUseAgenda(fresh) !== Boolean(showAgenda)) window.location.reload();
+    }).catch(() => {});
+  }
+
   const groupMenus = [];
   groups.forEach(({ label, links: allLinks, role, roles }) => {
     if (role && user?.role !== role) return;
     if (roles && !roles.includes(user?.role)) return;
-    const links = allLinks.filter(([, , linkRoles]) => !linkRoles || linkRoles.includes(user?.role));
+    const links = allLinks
+      .filter(([href]) => showAgenda || !agendaPages.includes(href))
+      .filter(([, , linkRoles]) => !linkRoles || linkRoles.includes(user?.role));
     if (!links.length) return;
     const groupMenu = document.createElement('details');
     groupMenu.className = 'app-nav-group';

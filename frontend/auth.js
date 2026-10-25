@@ -1139,6 +1139,12 @@ window.AppAuth = {
     isAdmin,
     isSuperAdmin,
     hasRole,
+    refreshUser: fetchCurrentUser,
+    canUseAgenda(user = getStoredUser()) {
+        return Boolean(
+            user && (user.role === "superadmin" || user.agenda_enabled)
+        );
+    },
 
     async login(username, password) {
         dispatchAuthEvent("app-auth-login-start");

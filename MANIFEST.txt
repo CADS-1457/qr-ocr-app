@@ -1,0 +1,13 @@
+INTEGRATION-SIGNALETIQUE-NOTIFICATIONS.md
+MANIFEST.txt
+PROCEDURE-RECETTE.md
+README-INSTALLATION.md
+backend/agenda_module/__init__.py
+backend/agenda_module/dependencies.py
+backend/agenda_module/router.py
+backend/agenda_module/schemas.py
+backend/agenda_module/service.py
+database/010_agenda_patient_flow_stock.sql
+frontend/agenda/agenda.css
+frontend/agenda/agenda.js
+frontend/agenda.html

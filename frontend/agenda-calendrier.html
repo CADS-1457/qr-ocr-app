@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Calendrier des rendez-vous</title>
+  <link rel="stylesheet" href="app-shell.css">
+  <link rel="stylesheet" href="agenda/agenda.css">
+  <link rel="stylesheet" href="agenda/calendrier.css">
+  <script src="auth.js" defer></script>
+  <script src="app-navigation.js" defer></script>
+  <script src="agenda/calendrier.js" defer></script>
+  <script src="agenda/blocs.js" defer></script>
+  <script src="agenda/groupes.js" defer></script>
+  <script src="agenda/transfert.js" defer></script>
+  <script src="agenda/suivi.js" defer></script>
+  <script src="agenda/configuration.js" defer></script>
+  <script src="agenda/assistant.js" defer></script>
+  <script src="agenda/dialogs.js" defer></script>
+  <script src="agenda/access.js" defer></script>
+</head>
+<body>
+  <main class="agenda-page calendar-page">
+    <div id="authBar" class="auth-bar" hidden>
+      <strong id="signedInAs"></strong>
+      <button id="logoutButton" class="secondary" type="button">Déconnexion</button>
+    </div>
+    <form id="loginForm" class="login-grid">
+      <div class="field"><label for="loginUsername">Utilisateur</label><input id="loginUsername" autocomplete="username" required></div>
+      <div class="field"><label for="loginPassword">Mot de passe</label><input id="loginPassword" type="password" autocomplete="current-password" required></div>
+      <button id="loginButton" type="submit">Connexion</button>
+    </form>
+    <div id="authStatus" class="status" aria-live="polite"></div>
+
+    <header class="calendar-toolbar">
+      <div class="toolbar-row toolbar-top">
+      <div class="calendar-title">
+        <h1 class="calendar-icon-title" title="Calendrier des rendez-vous" aria-label="Calendrier des rendez-vous">
+          <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="3"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+          <span id="periodLabel" aria-live="polite"></span>
+        </h1>
+      </div>
+      <button id="newAppointment" type="button">Nouveau rendez-vous</button>
+      <button id="openAssistant" type="button" class="secondary">Assistant rendez-vous</button>
+      <details id="agendaMenu" class="agenda-menu" hidden>
+        <summary class="secondary" title="Options de l’agenda" aria-label="Options de l’agenda">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+        </summary>
+        <div class="agenda-menu-list" role="menu">
+          <button id="manageBlocks" type="button" role="menuitem">Plages de rendez-vous</button>
+          <button id="manageGroups" type="button" role="menuitem">Groupes d’agendas</button>
+          <a id="openConfiguration" role="menuitem" href="agenda.html?config=1">Configuration de l’agenda</a>
+        </div>
+      </details>
+      </div>
+      <div class="toolbar-row toolbar-filters">
+      <div class="calendar-nav">
+        <button id="prev" type="button" class="secondary" aria-label="Période précédente">‹</button>
+        <button id="today" type="button" class="secondary">Aujourd’hui</button>
+        <button id="next" type="button" class="secondary" aria-label="Période suivante">›</button>
+      </div>
+      <div class="view-switch" role="group" aria-label="Type de vue">
+        <button type="button" data-view="day" class="secondary">Jour</button>
+        <button type="button" data-view="week" class="secondary">Semaine</button>
+        <button type="button" data-view="month" class="secondary">Mois</button>
+      </div>
+        <label>Groupe<select id="groupFilter"><option value="">Aucun</option></select></label>
+        <label>Salle<select id="roomFilter"><option value="">Toutes</option></select></label>
+        <label>Médecin<select id="doctorFilter"><option value="">Tous</option></select></label>
+      </div>
+    </header>
+    <p id="message" role="status" aria-live="polite"></p>
+    <div id="calendarLegend" class="calendar-legend" hidden></div>
+
+    <section class="calendar-card">
+      <div id="calendar" class="calendar" aria-label="Calendrier"></div>
+    </section>
+  </main>
+
+  <dialog id="detailDialog">
+    <div id="detailBody"></div>
+    <div class="actions">
+      <a id="detailOpen" class="button-link" href="agenda.html">Ouvrir dans le parcours patient</a>
+      <button id="detailTransfer" type="button" class="icon-link" title="Transférer le patient (ex. salle de réveil)" aria-label="Transférer le patient">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h14"/><path d="m14 4 4 4-4 4"/><path d="M20 16H6"/><path d="m10 12-4 4 4 4"/></svg>
+      </button>
+      <button id="detailFollowUp" type="button" class="icon-link" title="Suivi complet de la journée" aria-label="Suivi complet de la journée">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+      </button>
+      <button id="detailEdit" type="button">Modifier / déplacer</button>
+      <button id="detailCancel" type="button" class="secondary">Annuler le rendez-vous</button>
+      <button id="detailDelete" type="button" class="danger">Supprimer</button>
+    </div>
+  </dialog>
+
+  <dialog id="followUpDialog">
+    <h2 id="followUpTitle">Suivi de la journée</h2>
+    <label>Journée<input id="followUpDay" type="date"></label>
+    <p id="followUpMessage" class="form-error" role="status"></p>
+    <ol id="followUpList" class="follow-up-list"></ol>
+  </dialog>
+
+  <dialog id="confirmDialog" class="confirm-dialog">
+    <h2 id="confirmTitle">Confirmation</h2>
+    <p id="confirmText"></p>
+    <div class="actions">
+      <button type="button" id="confirmNo" class="secondary">Non, garder</button>
+      <button type="button" id="confirmYes">Confirmer</button>
+    </div>
+  </dialog>
+
+  <dialog id="appointmentDialog">
+    <form id="appointmentForm">
+      <h2 id="appointmentTitle">Nouveau rendez-vous</h2>
+      <label>Patient<select id="patient" required></select></label>
+      <label>Type<select id="appointmentType"></select></label>
+      <label>Salle<select id="appointmentRoom" required></select></label>
+      <label>Médecin<select id="doctor"></select></label>
+      <label>Opérateur<select id="operator"></select></label>
+      <label>Début<input id="startsAt" type="datetime-local" required></label>
+      <label>Fin<input id="endsAt" type="datetime-local" required></label>
+      <label>Notes<textarea id="notes" maxlength="4000"></textarea></label>
+      <p id="appointmentError" class="form-error" role="alert"></p>
+      <div class="actions">
+        <button type="button" data-close="appointmentDialog">Annuler</button>
+        <button type="submit" id="appointmentSubmit">Créer</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="transferDialog">
+    <form id="transferForm">
+      <h2>Transférer le patient</h2>
+      <p id="transferWho" class="hint"></p>
+      <fieldset class="movements">
+        <legend>Historique des mouvements</legend>
+        <label>Journée<input id="trMovesDay" type="date"></label>
+        <ol id="trMovements" class="movement-list"></ol>
+      </fieldset>
+      <label>Destination<select id="trLocation" required></select></label>
+      <label>Nouveau statut
+        <select id="trState">
+          <option value="PRESENT">Présent</option>
+          <option value="WAITING">En attente</option>
+          <option value="IN_PROGRESS">En cours</option>
+          <option value="RECOVERY">Réveil</option>
+          <option value="BILLING">Facturation</option>
+          <option value="COMPLETED">Terminé</option>
+        </select>
+      </label>
+      <label class="checkbox"><input id="trStartNow" type="checkbox" checked> Commencer à l'heure du transfert (heure actuelle)</label>
+      <label>Commentaire de transmission<textarea id="trHandover" maxlength="4000"></textarea></label>
+      <label>Commentaire salle de réveil<textarea id="trRecovery" maxlength="4000"></textarea></label>
+      <label>Instructions de sortie<textarea id="trDischarge" maxlength="8000"></textarea></label>
+      <fieldset>
+        <legend>Consommations de stock</legend>
+        <div id="trConsumptions"></div>
+      </fieldset>
+      <label class="checkbox"><input id="trFollowup" type="checkbox"> Visite post-op à replanifier</label>
+      <label id="trFollowUpTypeField" hidden>Type du suivi<select id="trFollowUpType"></select></label>
+      <label id="trFollowUpDateField" hidden>Date du suivi<input id="trFollowUpDate" type="date"></label>
+      <p id="transferError" class="form-error" role="alert"></p>
+      <div class="actions">
+        <button type="button" id="trCancel">Annuler</button>
+        <button type="submit">Transférer</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="assistantDialog" class="assistant-dialog">
+    <form id="assistantForm">
+      <h2>Assistant rendez-vous</h2>
+      <p class="hint">Indiquez vos critères : l’assistant propose les meilleurs créneaux libres.</p>
+      <div class="assistant-grid">
+        <label>Type de rendez-vous<select id="asType"></select></label>
+        <div class="assistant-line">
+          <label>Durée (minutes)<input id="asDuration" type="number" min="0" max="480" step="5" value="0" placeholder="0 = durée de la plage"></label>
+          <label>Nombre de plages voulues<input id="asCount" type="number" min="1" max="50" value="12" required></label>
+        </div>
+        <label>Salle<select id="asRoom"></select></label>
+        <label>Médecin<select id="asDoctor"></select></label>
+        <label>À partir du<input id="asFrom" type="date" required></label>
+        <label>Jusqu’au<input id="asTo" type="date" required></label>
+        <label>Pas avant<input id="asTimeFrom" type="time"></label>
+        <label>Fin au plus tard<input id="asTimeTo" type="time"></label>
+        <label>Heure idéale<input id="asPreferred" type="time"></label>
+      </div>
+      <div class="assistant-chips" role="group" aria-label="Raccourcis">
+        <button type="button" class="secondary chip" data-preset="morning">Matin</button>
+        <button type="button" class="secondary chip" data-preset="afternoon">Après-midi</button>
+        <button type="button" class="secondary chip" data-preset="week">7 jours</button>
+        <button type="button" class="secondary chip" data-preset="month">30 jours</button>
+      </div>
+      <fieldset class="assistant-days">
+        <legend>Jours acceptés</legend>
+        <label class="checkbox"><input type="checkbox" name="asDay" value="0" checked> Lun</label>
+        <label class="checkbox"><input type="checkbox" name="asDay" value="1" checked> Mar</label>
+        <label class="checkbox"><input type="checkbox" name="asDay" value="2" checked> Mer</label>
+        <label class="checkbox"><input type="checkbox" name="asDay" value="3" checked> Jeu</label>
+        <label class="checkbox"><input type="checkbox" name="asDay" value="4" checked> Ven</label>
+        <label class="checkbox"><input type="checkbox" name="asDay" value="5"> Sam</label>
+        <label class="checkbox"><input type="checkbox" name="asDay" value="6"> Dim</label>
+      </fieldset>
+      <p id="assistantError" class="form-error" role="alert"></p>
+      <div class="actions"><button type="submit">Rechercher</button></div>
+      <p id="assistantSummary" class="hint" role="status"></p>
+      <div id="assistantResults" class="assistant-results"></div>
+    </form>
+  </dialog>
+
+  <dialog id="groupsDialog" class="blocks-dialog">
+    <form id="groupForm">
+      <h2>Groupes d’agendas</h2>
+      <p class="hint">Regroupez plusieurs salles/agendas pour les afficher ensemble sur une même page. Le groupe apparaît ensuite dans la liste « Groupe » du calendrier.</p>
+      <fieldset>
+        <legend id="groupFormTitle">Nouveau groupe</legend>
+        <label>Nom du groupe<input id="groupName" maxlength="100" required></label>
+        <div class="field-label">Agendas du groupe</div>
+        <div id="groupRooms" class="weekday-picker" role="group" aria-label="Agendas du groupe"></div>
+        <p id="groupError" class="form-error" role="alert"></p>
+        <div class="actions">
+          <button type="button" id="groupCancelEdit" class="secondary" hidden>Annuler la modification</button>
+          <button type="submit" id="groupSubmit">Créer le groupe</button>
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>Groupes existants</legend>
+        <div id="groupList" class="block-list"></div>
+      </fieldset>
+    </form>
+  </dialog>
+
+  <dialog id="blocksDialog" class="blocks-dialog">
+    <form id="blockForm">
+      <h2>Plages de rendez-vous</h2>
+      <p class="hint">Définissez quand on peut programmer des rendez-vous. Une salle sans plage reste librement réservable ; dès qu’elle en a, seuls les créneaux de ces plages sont acceptés.</p>
+      <fieldset>
+        <legend id="blockFormTitle">Nouvelle plage</legend>
+        <label>Salle<select id="blockRoom" required></select></label>
+        <label>Agenda (médecin)<select id="blockResource"></select></label>
+        <div class="weekday-picker" role="group" aria-label="Jours">
+          <label class="checkbox"><input type="checkbox" name="weekday" value="0"> Lun</label>
+          <label class="checkbox"><input type="checkbox" name="weekday" value="1"> Mar</label>
+          <label class="checkbox"><input type="checkbox" name="weekday" value="2"> Mer</label>
+          <label class="checkbox"><input type="checkbox" name="weekday" value="3"> Jeu</label>
+          <label class="checkbox"><input type="checkbox" name="weekday" value="4"> Ven</label>
+          <label class="checkbox"><input type="checkbox" name="weekday" value="5"> Sam</label>
+          <label class="checkbox"><input type="checkbox" name="weekday" value="6"> Dim</label>
+        </div>
+        <label>De<input id="blockStart" type="time" step="60" required></label>
+        <div class="block-line">
+          <label>Durée d’une plage (minutes)<input id="blockSlot" type="number" min="1" max="1440" value="30" required></label>
+          <label>Nombre de plages<input id="blockCount" type="number" min="1" max="500" placeholder="ex. 8"></label>
+        </div>
+        <label>À (heure de fin)<input id="blockEnd" type="time" step="60" required></label>
+        <label>Libellé<input id="blockLabel" maxlength="100"></label>
+        <div class="color-field">
+          <span class="field-label">Couleur : <strong id="blockColorName">Couleur de la salle</strong></span>
+          <div id="blockPalette" class="palette" role="group" aria-label="Palette de couleurs"></div>
+          <label id="blockColorCustom" class="swatch swatch-custom" title="Couleur personnalisée">
+            <input id="blockColor" type="color" value="#2563eb" aria-label="Couleur personnalisée">
+          </label>
+        </div>
+        <label>Valable du<input id="blockFrom" type="date"></label>
+        <label>Jusqu’au<input id="blockTo" type="date"></label>
+        <label class="checkbox" id="blockActiveField" hidden><input id="blockActive" type="checkbox" checked> Plage active</label>
+        <p id="blockError" class="form-error" role="alert"></p>
+        <div class="actions">
+          <button type="button" id="blockCancelEdit" class="secondary" hidden>Annuler la modification</button>
+          <button type="submit" id="blockSubmit">Ajouter la plage</button>
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend>Surréservation (overbooking)</legend>
+        <p class="hint">Nombre maximal de rendez-vous simultanés pour une salle/agenda. 1 = un seul rendez-vous par créneau ; au-delà, plusieurs patients différents peuvent partager la même plage.</p>
+        <div class="block-line">
+          <label>Salle<select id="overRoom"></select></label>
+          <label>Rendez-vous simultanés (max)<input id="overMax" type="number" min="1" max="20" value="1"></label>
+        </div>
+        <p id="overMessage" class="form-error" role="alert"></p>
+        <div class="actions"><button type="button" id="overSave">Enregistrer la surréservation</button></div>
+      </fieldset>
+      <fieldset>
+        <legend>Statut par défaut d'une salle (transfert)</legend>
+        <p class="hint">Statut proposé automatiquement lorsqu'un patient est transféré vers cette salle (ex. « Réveil » pour la salle de réveil).</p>
+        <div class="block-line">
+          <label>Salle<select id="stateRoom"></select></label>
+          <label>Statut par défaut
+            <select id="stateDefault">
+              <option value="">Aucun (statut actuel)</option>
+              <option value="PRESENT">Présent</option>
+              <option value="WAITING">En attente</option>
+              <option value="IN_PROGRESS">En cours</option>
+              <option value="RECOVERY">Réveil</option>
+              <option value="BILLING">Facturation</option>
+              <option value="COMPLETED">Terminé</option>
+            </select>
+          </label>
+        </div>
+        <p id="stateMessage" class="form-error" role="alert"></p>
+        <div class="actions"><button type="button" id="stateSave">Enregistrer le statut par défaut</button></div>
+      </fieldset>
+      <fieldset>
+        <legend>Modifier une salle</legend>
+        <p class="hint">Nom, type, couleur et capacité de la salle (administrateur).</p>
+        <div class="block-line">
+          <label>Salle<select id="editRoom"></select></label>
+          <label>Nom<input id="editName" type="text" maxlength="255"></label>
+          <label>Type
+            <select id="editKind">
+              <option value="CONSULTATION">Consultation</option>
+              <option value="OPERATING">Bloc opératoire</option>
+              <option value="WAITING">Attente</option>
+              <option value="RECOVERY">Réveil</option>
+              <option value="BILLING">Facturation</option>
+              <option value="OTHER">Autre</option>
+            </select>
+          </label>
+          <label>Couleur<input id="editColor" type="color" value="#64748b"></label>
+          <label>Capacité<input id="editCapacity" type="number" min="1" value="1"></label>
+        </div>
+        <p id="editRoomMessage" class="form-error" role="alert"></p>
+        <div class="actions"><button type="button" id="editRoomSave">Enregistrer la salle</button></div>
+      </fieldset>
+      <fieldset>
+        <legend>Plages existantes</legend>
+        <label>Filtrer par salle<select id="blockRoomFilter"></select></label>
+        <div id="blockList" class="block-list"></div>
+      </fieldset>
+    </form>
+  </dialog>
+<dialog id="configFrameDialog" class="config-frame-dialog">
+  <iframe id="configFrame" title="Configuration de l’agenda"></iframe>
+</dialog>
+</body>
+</html>

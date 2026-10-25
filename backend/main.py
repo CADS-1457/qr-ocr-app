@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timezone
@@ -15,6 +16,8 @@ from fastapi.responses import Response
 from sqlalchemy import Column, LargeBinary, delete, func, inspect, or_, update
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Field, Session, SQLModel, create_engine, select
+
+from agenda_module.router import router as agenda_router
 
 MAX_IMAGE_SIZE = 10 * 1024 * 1024
 ADMIN_TOKEN_TTL_SECONDS = 8 * 60 * 60
@@ -85,6 +88,7 @@ class UserAccount(SQLModel, table=True):
     password_hash: str
     role: str = Field(default="user", max_length=20)
     active: bool = Field(default=True)
+    agenda_enabled: bool = Field(default=False)
     auth_version: int = Field(default=0)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -98,6 +102,7 @@ class UserCreate(SQLModel):
     username: str = Field(min_length=1, max_length=255)
     password: str = Field(min_length=12, max_length=1024)
     role: Literal["admin", "user"] = "user"
+    agenda_enabled: bool = False
 
 
 class UserUpdate(SQLModel):
@@ -105,6 +110,7 @@ class UserUpdate(SQLModel):
     password: Optional[str] = Field(default=None, min_length=12, max_length=1024)
     role: Optional[Literal["admin", "user"]] = None
     active: Optional[bool] = None
+    agenda_enabled: Optional[bool] = None
 
 
 class UserRead(SQLModel):
@@ -112,6 +118,7 @@ class UserRead(SQLModel):
     username: str
     role: str
     active: bool
+    agenda_enabled: bool = False
     created_at: datetime
 
 
@@ -305,6 +312,11 @@ class Patient(SQLModel, table=True):
     nom: str = Field(max_length=255, index=True)
     prenom: str = Field(max_length=255, index=True)
     date_naissance: date
+    mobile: Optional[str] = Field(default=None, max_length=50)
+    email: Optional[str] = Field(default=None, max_length=255)
+    language: Optional[str] = Field(default=None, max_length=10)
+    sms_consent: bool = Field(default=False)
+    email_consent: bool = Field(default=False)
     created_by: str = Field(max_length=255)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
@@ -317,13 +329,28 @@ class PatientRead(SQLModel):
     nom: str
     prenom: str
     date_naissance: date
+    mobile: Optional[str] = None
+    email: Optional[str] = None
+    language: Optional[str] = None
+    sms_consent: bool = False
+    email_consent: bool = False
     created_at: datetime
+
+
+PATIENT_LANGUAGES = {"fr", "nl", "de", "en"}
+PATIENT_MOBILE_PATTERN = re.compile(r"^\+?[0-9][0-9 .\-/()]{5,29}$")
+PATIENT_EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 class PatientUpdate(SQLModel):
     nom: Optional[str] = Field(default=None, min_length=1, max_length=255)
     prenom: Optional[str] = Field(default=None, min_length=1, max_length=255)
     date_naissance: Optional[date] = None
+    mobile: Optional[str] = Field(default=None, max_length=50)
+    email: Optional[str] = Field(default=None, max_length=255)
+    language: Optional[str] = Field(default=None, max_length=10)
+    sms_consent: Optional[bool] = None
+    email_consent: Optional[bool] = None
 
 
 class StockScanResolveRequest(SQLModel):
@@ -424,7 +451,19 @@ def create_db_and_tables():
     patient_dispensation_columns = {
         column["name"] for column in inspect(engine).get_columns("patientdispensation")
     }
+    patient_columns = {column["name"] for column in inspect(engine).get_columns("patient")}
     with engine.begin() as connection:
+        for column_name, column_type in (
+            ("mobile", "VARCHAR(50)"),
+            ("email", "VARCHAR(255)"),
+            ("language", "VARCHAR(10)"),
+            ("sms_consent", "BOOLEAN NOT NULL DEFAULT FALSE"),
+            ("email_consent", "BOOLEAN NOT NULL DEFAULT FALSE"),
+        ):
+            if column_name not in patient_columns:
+                connection.exec_driver_sql(
+                    f"ALTER TABLE patient ADD COLUMN {column_name} {column_type}"
+                )
         if "image_data" not in scan_columns:
             connection.exec_driver_sql("ALTER TABLE scan ADD COLUMN image_data BLOB")
         if "image_content_type" not in scan_columns:
@@ -439,6 +478,12 @@ def create_db_and_tables():
             connection.exec_driver_sql(
                 "ALTER TABLE useraccount ADD COLUMN auth_version INTEGER NOT NULL DEFAULT 0"
             )
+        if "agenda_enabled" not in user_columns:
+            connection.exec_driver_sql(
+                "ALTER TABLE useraccount ADD COLUMN agenda_enabled BOOLEAN NOT NULL DEFAULT FALSE"
+            )
+            # Les comptes existants gardent l'accès dont ils disposaient jusque-là.
+            connection.exec_driver_sql("UPDATE useraccount SET agenda_enabled=TRUE")
         if "code_barres" not in stock_item_columns:
             connection.exec_driver_sql(
                 "ALTER TABLE stockitem ADD COLUMN code_barres VARCHAR(255)"
@@ -765,6 +810,10 @@ def require_superadmin(
     return user
 
 
+def has_agenda_access(user: UserAccount) -> bool:
+    return user.role == "superadmin" or bool(user.agenda_enabled)
+
+
 def audit_snapshot(entity: SQLModel) -> str:
     excluded_fields = {"password_hash", "auth_version", "image_data"}
     values = {
@@ -840,6 +889,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="API QR Code et OCR", version="1.0.0", lifespan=lifespan)
 
+app.include_router(agenda_router)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -893,6 +944,11 @@ def list_users(authorization: Optional[str] = Header(default=None)):
 @app.post("/api/admin/users", response_model=UserRead, status_code=201)
 def create_user(payload: UserCreate, authorization: Optional[str] = Header(default=None)):
     user_actor = require_admin(authorization)
+    if payload.agenda_enabled and user_actor.role != "superadmin":
+        raise HTTPException(
+            status_code=403,
+            detail="Seul le SuperAdmin peut activer le module Agenda.",
+        )
     username = payload.username.strip()
     if not username:
         raise HTTPException(status_code=422, detail="Le nom d'utilisateur est requis.")
@@ -907,6 +963,7 @@ def create_user(payload: UserCreate, authorization: Optional[str] = Header(defau
             password_hash=hash_password(payload.password),
             role=payload.role,
             active=True,
+            agenda_enabled=payload.agenda_enabled,
         )
         session.add(user)
         session.flush()
@@ -934,6 +991,14 @@ def update_user(
 ):
     user_actor = require_admin(authorization)
     changes = payload.model_dump(exclude_unset=True)
+    if "agenda_enabled" in changes:
+        if user_actor.role != "superadmin":
+            raise HTTPException(
+                status_code=403,
+                detail="Seul le SuperAdmin peut activer ou retirer le module Agenda.",
+            )
+        if changes["agenda_enabled"] is None:
+            raise HTTPException(status_code=422, detail="L'accès Agenda est requis.")
     if not changes:
         raise HTTPException(status_code=422, detail="Aucune donnée à modifier.")
     if "username" in changes:
@@ -1758,10 +1823,41 @@ def update_patient(
                 status_code=422,
                 detail="La date de naissance ne peut pas être dans le futur.",
             )
+    for field in ("mobile", "email", "language"):
+        if field in changes:
+            value = (changes[field] or "").strip()
+            changes[field] = value or None
+    if changes.get("mobile") and not PATIENT_MOBILE_PATTERN.match(changes["mobile"]):
+        raise HTTPException(status_code=422, detail="Le numéro de mobile est invalide.")
+    if changes.get("email"):
+        changes["email"] = changes["email"].lower()
+        if not PATIENT_EMAIL_PATTERN.match(changes["email"]):
+            raise HTTPException(status_code=422, detail="L’adresse e-mail est invalide.")
+    if changes.get("language"):
+        changes["language"] = changes["language"].lower()
+        if changes["language"] not in PATIENT_LANGUAGES:
+            raise HTTPException(status_code=422, detail="La langue doit être fr, nl, de ou en.")
+    for field in ("sms_consent", "email_consent"):
+        if field in changes and changes[field] is None:
+            raise HTTPException(status_code=422, detail="Le consentement doit être vrai ou faux.")
     with Session(engine) as session:
         patient = session.get(Patient, patient_id)
         if not patient:
             raise HTTPException(status_code=404, detail="Patient introuvable.")
+        if changes.get("sms_consent") and not (changes.get("mobile", patient.mobile)):
+            raise HTTPException(
+                status_code=422,
+                detail="Un numéro de mobile est requis pour autoriser les SMS.",
+            )
+        if changes.get("email_consent") and not (changes.get("email", patient.email)):
+            raise HTTPException(
+                status_code=422,
+                detail="Une adresse e-mail est requise pour autoriser les e-mails.",
+            )
+        if "mobile" in changes and not changes["mobile"]:
+            changes["sms_consent"] = False
+        if "email" in changes and not changes["email"]:
+            changes["email_consent"] = False
         before_data = audit_snapshot(patient)
         for field, value in changes.items():
             setattr(patient, field, value)

@@ -1,0 +1,1512 @@
+﻿import json
+from datetime import date, datetime, time, timedelta
+from uuid import UUID
+from zoneinfo import ZoneInfo
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import inspect, text
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
+
+from .dependencies import get_current_user_id, get_db, require_admin
+from .schemas import (
+    AppointmentCreate,
+    AppointmentTypeCreate,
+    ResourceCreate,
+    RoomOrder,
+    ResourceUpdate,
+    AppointmentTypeUpdate,
+    AgendaGroupPayload,
+    RoomCreate,
+    RoomUpdate,    SchedulingBlockCreate,
+    SchedulingBlockUpdate,
+    StockItemCreate,
+    StockLocationCreate,
+    StockLocationRooms,
+    StockUnitCreate,
+    StatusRequest,
+    TransferRequest,
+)
+from .service import transfer
+
+router = APIRouter(prefix="/api/agenda", tags=["agenda"])
+
+AGENDA_TIMEZONE = "Europe/Brussels"
+BLOCK_COLUMNS = (
+    "b.id,b.room_id,r.name AS room,b.resource_id,p.display_name AS resource,"
+    "b.weekday,to_char(b.start_time,'HH24:MI') AS start_time,"
+    "to_char(b.end_time,'HH24:MI') AS end_time,b.slot_minutes,b.label,b.color,r.color AS room_color,"
+    "b.valid_from,b.valid_to,b.active"
+)
+BLOCK_FROM = (
+    "FROM scheduling_blocks b JOIN rooms r ON r.id=b.room_id "
+    "LEFT JOIN people_resources p ON p.id=b.resource_id"
+)
+
+
+def _block_overlap_exists(db: Session, room_id: UUID, resource_id: UUID | None, weekday: int,
+                          start_time: time, end_time: time, valid_from: date | None,
+                          valid_to: date | None, exclude_id: UUID | None = None) -> bool:
+    return bool(
+        db.execute(
+            text(
+                "SELECT EXISTS(SELECT 1 FROM scheduling_blocks WHERE active AND room_id=:room_id "
+                "AND resource_id IS NOT DISTINCT FROM CAST(:resource_id AS uuid) "
+                "AND weekday=:weekday AND start_time<:end_time AND end_time>:start_time "
+                "AND (valid_to IS NULL OR CAST(:valid_from AS date) IS NULL OR valid_to>=CAST(:valid_from AS date)) "
+                "AND (valid_from IS NULL OR CAST(:valid_to AS date) IS NULL OR valid_from<=CAST(:valid_to AS date)) "
+                "AND (CAST(:exclude_id AS uuid) IS NULL OR id<>CAST(:exclude_id AS uuid)))"
+            ),
+            {
+                "room_id": room_id, "resource_id": resource_id, "weekday": weekday,
+                "start_time": start_time, "end_time": end_time, "valid_from": valid_from,
+                "valid_to": valid_to, "exclude_id": exclude_id,
+            },
+        ).scalar_one()
+    )
+
+
+def exceeds_parallel(intervals: list[tuple[datetime, datetime]], start: datetime,
+                     end: datetime, limit: int) -> bool:
+    """Vrai si ajouter [start,end[ dépasse `limit` rendez-vous simultanés à un instant donné."""
+    overlapping = [(s, e) for s, e in intervals if s < end and e > start]
+    points = [start] + [s for s, _ in overlapping if start < s < end]
+    return any(
+        sum(1 for s, e in overlapping if s <= point < e) + 1 > limit for point in points
+    )
+
+
+def ensure_room_capacity(db: Session, room_id: UUID, patient_id: int,
+                         starts_at: datetime, ends_at: datetime,
+                         exclude_id: UUID | None = None) -> None:
+    """Applique le plafond de rendez-vous simultanés de la salle (surréservation)."""
+    # Verrou transactionnel par salle : évite deux réservations concurrentes au-delà du plafond.
+    db.execute(text("SELECT pg_advisory_xact_lock(hashtext(CAST(:room AS text)))"), {"room": str(room_id)})
+    limit = db.execute(
+        text("SELECT max_parallel FROM rooms WHERE id=:id"), {"id": room_id}
+    ).scalar_one_or_none()
+    if limit is None:
+        raise HTTPException(status_code=404, detail="Salle introuvable.")
+    rows = db.execute(
+        text(
+            "SELECT patient_id,starts_at,ends_at FROM appointments "
+            "WHERE room_id=:room AND starts_at<:e AND ends_at>:s "
+            "AND state NOT IN ('CANCELLED','NO_SHOW','POSTPONED') "
+            "AND (CAST(:exclude AS uuid) IS NULL OR id<>CAST(:exclude AS uuid))"
+        ),
+        {"room": room_id, "s": starts_at, "e": ends_at, "exclude": exclude_id},
+    ).mappings().all()
+    if any(row["patient_id"] == patient_id for row in rows):
+        raise HTTPException(
+            status_code=409, detail="Ce patient a déjà un rendez-vous dans cette salle sur cette plage."
+        )
+    if exceeds_parallel([(row["starts_at"], row["ends_at"]) for row in rows], starts_at, ends_at, limit):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "La salle est occupée sur cette plage."
+                if limit == 1
+                else f"Capacité atteinte : {limit} rendez-vous simultanés maximum pour cette salle."
+            ),
+        )
+
+
+def ensure_slot_allowed(db: Session, room_id: UUID, doctor_id: UUID | None,
+                        starts_at: datetime, ends_at: datetime) -> None:
+    """Refuse un rendez-vous hors des plages définies, si la salle en possède."""
+    row = db.execute(
+        text(
+            "WITH t AS (SELECT (CAST(:s AS timestamptz) AT TIME ZONE :tz) AS ls,"
+            "(CAST(:e AS timestamptz) AT TIME ZONE :tz) AS le) "
+            "SELECT EXISTS(SELECT 1 FROM scheduling_blocks WHERE room_id=:room AND active) AS restricted,"
+            "EXISTS(SELECT 1 FROM scheduling_blocks b, t WHERE b.room_id=:room AND b.active "
+            "AND b.weekday=EXTRACT(isodow FROM t.ls)::int-1 AND t.ls::date=t.le::date "
+            "AND t.ls::time>=b.start_time AND t.le::time<=b.end_time "
+            "AND (b.valid_from IS NULL OR b.valid_from<=t.ls::date) "
+            "AND (b.valid_to IS NULL OR b.valid_to>=t.ls::date) "
+            "AND (b.resource_id IS NULL OR b.resource_id=CAST(:doctor AS uuid)) "
+            "AND MOD((EXTRACT(EPOCH FROM (t.ls::time-b.start_time))/60)::int,b.slot_minutes)=0) AS allowed"
+        ),
+        {"s": starts_at, "e": ends_at, "tz": AGENDA_TIMEZONE, "room": room_id, "doctor": doctor_id},
+    ).mappings().one()
+    if row["restricted"] and not row["allowed"]:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Ce créneau est hors des plages de rendez-vous définies pour cette salle "
+                "(début aligné sur le pas de la plage, fin comprise dans la plage)."
+            ),
+        )
+
+
+def get_patient_contact(db: Session, patient_id: int) -> dict[str, object] | None:
+    columns = {column["name"] for column in inspect(db.get_bind()).get_columns("patient")}
+    contact_columns = {
+        "mobile": next(
+            (name for name in ("mobile", "telephone", "phone") if name in columns),
+            None,
+        ),
+        "email": next(
+            (name for name in ("email", "courriel") if name in columns),
+            None,
+        ),
+        "language": next(
+            (name for name in ("language", "langue") if name in columns),
+            None,
+        ),
+        "sms_consent": "sms_consent" if "sms_consent" in columns else None,
+        "email_consent": "email_consent" if "email_consent" in columns else None,
+    }
+    selected = ", ".join(
+        f'"{column}" AS "{field}"'
+        for field, column in contact_columns.items()
+        if column is not None
+    )
+    suffix = f", {selected}" if selected else ""
+    patient = db.execute(
+        text(
+            "SELECT id,prenom,nom"
+            f"{suffix} FROM patient WHERE id=:patient_id"
+        ),
+        {"patient_id": patient_id},
+    ).mappings().first()
+    if patient is None:
+        return None
+    return {
+        "patient_id": patient["id"],
+        "display_name": f"{patient['prenom']} {patient['nom']}".strip(),
+        "mobile": patient.get("mobile"),
+        "email": patient.get("email"),
+        "language": patient.get("language"),
+        "sms_consent": bool(patient.get("sms_consent", False)),
+        "email_consent": bool(patient.get("email_consent", False)),
+    }
+
+
+@router.get("/health")
+def health(db: Session = Depends(get_db)) -> dict[str, str]:
+    db.execute(text("SELECT 1"))
+    return {"status": "ok", "module": "agenda-stock"}
+
+
+@router.get("/patients")
+def list_patients(
+    query: str = Query(default="", max_length=255),
+    db: Session = Depends(get_db),
+    _: int = Depends(get_current_user_id),
+) -> list[dict[str, object]]:
+    rows = db.execute(
+        text(
+            "SELECT id,prenom,nom,date_naissance FROM patient "
+            "WHERE :query='' OR lower(prenom || ' ' || nom) LIKE lower(:pattern) "
+            "ORDER BY nom,prenom,id LIMIT 100"
+        ),
+        {"query": query.strip(), "pattern": f"%{query.strip()}%"},
+    ).mappings()
+    return [
+        {
+            "id": row["id"],
+            "display_name": f"{row['prenom']} {row['nom']}".strip(),
+            "date_naissance": row["date_naissance"],
+        }
+        for row in rows
+    ]
+
+
+@router.get("/patients/{patient_id}/contact")
+def patient_contact(
+    patient_id: int,
+    db: Session = Depends(get_db),
+    _: int = Depends(get_current_user_id),
+) -> dict[str, object]:
+    contact = get_patient_contact(db, patient_id)
+    if contact is None:
+        raise HTTPException(status_code=404, detail="Patient introuvable.")
+    return contact
+
+
+@router.get("/rooms")
+def list_rooms(
+    db: Session = Depends(get_db),
+    _: int = Depends(get_current_user_id),
+) -> list[dict[str, object]]:
+    return [
+        dict(row)
+        for row in db.execute(
+            text("SELECT id,name,kind,color,capacity,max_parallel,default_state,sort_order FROM rooms WHERE active=true ORDER BY sort_order,name")
+        ).mappings()
+    ]
+
+
+@router.put("/rooms-order", dependencies=[Depends(require_admin)])
+def reorder_rooms(
+    payload: RoomOrder,
+    db: Session = Depends(get_db),
+) -> dict[str, int]:
+    """Enregistre l'ordre des colonnes de salles ; les salles omises passent après."""
+    for position, room_id in enumerate(payload.room_ids, start=1):
+        db.execute(
+            text("UPDATE rooms SET sort_order=:position WHERE id=:id AND active=true"),
+            {"position": position, "id": room_id},
+        )
+    db.commit()
+    return {"count": len(payload.room_ids)}
+
+
+@router.post("/rooms", status_code=201, dependencies=[Depends(require_admin)])
+def create_room(
+    payload: RoomCreate,
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    try:
+        row_id = db.execute(
+            text(
+                "INSERT INTO rooms(name,kind,color,capacity,max_parallel,sort_order) "
+                "VALUES(:name,:kind,:color,:capacity,:max_parallel,"
+                "(SELECT COALESCE(MAX(sort_order),0)+1 FROM rooms)) RETURNING id"
+            ),
+            payload.model_dump(),
+        ).scalar_one()
+        db.commit()
+        return {"id": str(row_id)}
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Une salle porte déjà ce nom.") from error
+
+
+@router.patch("/rooms/{room_id}", dependencies=[Depends(require_admin)])
+def update_room(
+    room_id: UUID,
+    payload: RoomUpdate,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    """Règle la surréservation (rendez-vous simultanés) et le statut de transfert par défaut."""
+    fields = payload.model_dump(exclude_unset=True, exclude_none=True)
+    if not fields:
+        raise HTTPException(status_code=422, detail="Aucun paramètre à modifier.")
+    if "default_state" in fields:
+        fields["default_state"] = fields["default_state"] or None
+    assignments = ",".join(f"{name}=:{name}" for name in fields)
+    if "name" in fields:
+        fields["name"] = fields["name"].strip()
+        if not fields["name"]:
+            raise HTTPException(status_code=422, detail="Le nom de la salle est obligatoire.")
+    try:
+        updated = db.execute(
+            text(f"UPDATE rooms SET {assignments} WHERE id=:id AND active=true"),
+            {**fields, "id": room_id},
+        ).rowcount
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Une salle porte déjà ce nom.") from error
+    if not updated:
+        raise HTTPException(status_code=404, detail="Salle introuvable.")
+    db.commit()
+    return fields
+
+
+@router.get("/agenda-groups")
+def list_agenda_groups(
+    db: Session = Depends(get_db),
+    _: int = Depends(get_current_user_id),
+) -> list[dict[str, object]]:
+    return [
+        dict(row)
+        for row in db.execute(
+            text(
+                "SELECT g.id,g.name,COALESCE(array_agg(gr.room_id) FILTER (WHERE gr.room_id IS NOT NULL),"
+                "'{}') AS room_ids FROM agenda_groups g "
+                "LEFT JOIN agenda_group_rooms gr ON gr.group_id=g.id "
+                "GROUP BY g.id,g.name ORDER BY lower(g.name)"
+            )
+        ).mappings()
+    ]
+
+
+def _save_group_rooms(db: Session, group_id: UUID, room_ids: list[UUID]) -> None:
+    db.execute(text("DELETE FROM agenda_group_rooms WHERE group_id=:id"), {"id": group_id})
+    for room_id in dict.fromkeys(room_ids):
+        db.execute(
+            text("INSERT INTO agenda_group_rooms(group_id,room_id) VALUES(:g,:r)"),
+            {"g": group_id, "r": room_id},
+        )
+
+
+@router.post("/agenda-groups", status_code=201, dependencies=[Depends(require_admin)])
+def create_agenda_group(payload: AgendaGroupPayload, db: Session = Depends(get_db)) -> dict[str, str]:
+    try:
+        group_id = db.execute(
+            text("INSERT INTO agenda_groups(name) VALUES(:name) RETURNING id"),
+            {"name": payload.name.strip()},
+        ).scalar_one()
+        _save_group_rooms(db, group_id, payload.room_ids)
+        db.commit()
+        return {"id": str(group_id)}
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=409, detail="Un groupe porte déjà ce nom ou une salle est invalide."
+        ) from error
+
+
+@router.put("/agenda-groups/{group_id}", dependencies=[Depends(require_admin)])
+def update_agenda_group(
+    group_id: UUID, payload: AgendaGroupPayload, db: Session = Depends(get_db)
+) -> dict[str, bool]:
+    try:
+        updated = db.execute(
+            text("UPDATE agenda_groups SET name=:name WHERE id=:id"),
+            {"name": payload.name.strip(), "id": group_id},
+        ).rowcount
+        if not updated:
+            raise HTTPException(status_code=404, detail="Groupe introuvable.")
+        _save_group_rooms(db, group_id, payload.room_ids)
+        db.commit()
+        return {"ok": True}
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=409, detail="Un groupe porte déjà ce nom ou une salle est invalide."
+        ) from error
+
+
+@router.delete("/agenda-groups/{group_id}", status_code=204, dependencies=[Depends(require_admin)])
+def delete_agenda_group(group_id: UUID, db: Session = Depends(get_db)) -> None:
+    deleted = db.execute(text("DELETE FROM agenda_groups WHERE id=:id"), {"id": group_id}).rowcount
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Groupe introuvable.")
+    db.commit()
+
+
+@router.get("/scheduling-blocks")
+def list_scheduling_blocks(
+    room_id: UUID | None = Query(default=None),
+    resource_id: UUID | None = Query(default=None),
+    db: Session = Depends(get_db),
+    _: int = Depends(get_current_user_id),
+) -> list[dict[str, object]]:
+    return [
+        dict(row)
+        for row in db.execute(
+            text(
+                f"SELECT {BLOCK_COLUMNS} {BLOCK_FROM} "
+                "WHERE (CAST(:room_id AS uuid) IS NULL OR b.room_id=CAST(:room_id AS uuid)) "
+                "AND (CAST(:resource_id AS uuid) IS NULL OR b.resource_id=CAST(:resource_id AS uuid)) "
+                "ORDER BY r.name,b.weekday,b.start_time"
+            ),
+            {"room_id": room_id, "resource_id": resource_id},
+        ).mappings()
+    ]
+
+
+@router.post("/scheduling-blocks", status_code=201, dependencies=[Depends(require_admin)])
+def create_scheduling_blocks(
+    payload: SchedulingBlockCreate,
+    db: Session = Depends(get_db),
+) -> dict[str, list[str]]:
+    for weekday in payload.weekdays:
+        if _block_overlap_exists(
+            db, payload.room_id, payload.resource_id, weekday, payload.start_time,
+            payload.end_time, payload.valid_from, payload.valid_to,
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Une plage existante chevauche celle-ci pour la même salle et le même agenda.",
+            )
+    try:
+        ids = [
+            str(
+                db.execute(
+                    text(
+                        "INSERT INTO scheduling_blocks(room_id,resource_id,weekday,start_time,"
+                        "end_time,slot_minutes,label,color,valid_from,valid_to) "
+                        "VALUES(:room_id,:resource_id,:weekday,:start_time,:end_time,"
+                        ":slot_minutes,:label,:color,:valid_from,:valid_to) RETURNING id"
+                    ),
+                    {
+                        **payload.model_dump(exclude={"weekdays"}),
+                        "weekday": weekday,
+                    },
+                ).scalar_one()
+            )
+            for weekday in payload.weekdays
+        ]
+        db.commit()
+        return {"ids": ids}
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Salle ou agenda invalide.") from error
+
+
+@router.put(
+    "/scheduling-blocks/{block_id}", dependencies=[Depends(require_admin)]
+)
+def update_scheduling_block(
+    block_id: UUID,
+    payload: SchedulingBlockUpdate,
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    room_id = db.execute(
+        text("SELECT room_id FROM scheduling_blocks WHERE id=:id"), {"id": block_id}
+    ).scalar_one_or_none()
+    if room_id is None:
+        raise HTTPException(status_code=404, detail="Plage introuvable.")
+    if payload.active and _block_overlap_exists(
+        db, room_id, payload.resource_id, payload.weekday, payload.start_time,
+        payload.end_time, payload.valid_from, payload.valid_to, block_id,
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Une plage existante chevauche celle-ci pour la même salle et le même agenda.",
+        )
+    try:
+        db.execute(
+            text(
+                "UPDATE scheduling_blocks SET resource_id=:resource_id,weekday=:weekday,"
+                "start_time=:start_time,end_time=:end_time,slot_minutes=:slot_minutes,"
+                "label=:label,color=:color,valid_from=:valid_from,valid_to=:valid_to,active=:active WHERE id=:id"
+            ),
+            {**payload.model_dump(), "id": block_id},
+        )
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Agenda invalide.") from error
+    return {"id": str(block_id)}
+
+
+@router.delete(
+    "/scheduling-blocks/{block_id}", status_code=204, dependencies=[Depends(require_admin)]
+)
+def delete_scheduling_block(block_id: UUID, db: Session = Depends(get_db)) -> None:
+    result = db.execute(text("DELETE FROM scheduling_blocks WHERE id=:id"), {"id": block_id})
+    db.commit()
+    if result.rowcount == 0:
+        raise HTTPException(status_code=404, detail="Plage introuvable.")
+
+
+@router.get("/availability")
+def availability(
+    start: date = Query(...),
+    end: date = Query(...),
+    room_id: UUID | None = Query(default=None),
+    doctor_id: UUID | None = Query(default=None),
+    db: Session = Depends(get_db),
+    _: int = Depends(get_current_user_id),
+) -> dict[str, object]:
+    """Plages réservables par jour sur [start, end[ ; les salles sans plage sont libres."""
+    if end <= start or (end - start).days > 62:
+        raise HTTPException(status_code=422, detail="Plage de dates invalide (62 jours maximum).")
+    rows = db.execute(
+        text(
+            f"SELECT {BLOCK_COLUMNS} {BLOCK_FROM} WHERE b.active "
+            "AND (CAST(:room_id AS uuid) IS NULL OR b.room_id=CAST(:room_id AS uuid)) "
+            "AND (CAST(:doctor_id AS uuid) IS NULL OR b.resource_id IS NULL "
+            "OR b.resource_id=CAST(:doctor_id AS uuid)) "
+            "AND (b.valid_to IS NULL OR b.valid_to>=:start) "
+            "AND (b.valid_from IS NULL OR b.valid_from<:end) "
+            "ORDER BY b.start_time"
+        ),
+        {"room_id": room_id, "doctor_id": doctor_id, "start": start, "end": end},
+    ).mappings().all()
+    blocks = []
+    day = start
+    while day < end:
+        for row in rows:
+            if (
+                row["weekday"] == day.weekday()
+                and (row["valid_from"] is None or row["valid_from"] <= day)
+                and (row["valid_to"] is None or row["valid_to"] >= day)
+            ):
+                blocks.append(
+                    {
+                        "date": day.isoformat(),
+                        "room_id": row["room_id"],
+                        "room": row["room"],
+                        "resource_id": row["resource_id"],
+                        "resource": row["resource"],
+                        "start_time": row["start_time"],
+                        "end_time": row["end_time"],
+                        "slot_minutes": row["slot_minutes"],
+                        "label": row["label"],
+                        "color": row["color"] or row["room_color"],
+                    }
+                )
+        day += timedelta(days=1)
+    restricted = [
+        str(value)
+        for value in db.execute(
+            text("SELECT DISTINCT room_id FROM scheduling_blocks WHERE active")
+        ).scalars()
+    ]
+    return {"blocks": blocks, "restricted_room_ids": restricted}
+
+
+def _parse_clock(value: str | None, default: time) -> time:
+    if not value:
+        return default
+    try:
+        return time.fromisoformat(value)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=f"Heure invalide : {value}") from error
+
+
+@router.get("/suggestions")
+def suggest_appointments(
+    start: date = Query(...),
+    end: date = Query(...),
+    duration: int = Query(default=0, ge=0, le=480, description="0 = durée de la plage"),
+    room_id: UUID | None = Query(default=None),
+    doctor_id: UUID | None = Query(default=None),
+    weekdays: str | None = Query(default=None, description="Jours 0=lundi, séparés par des virgules"),
+    time_from: str | None = Query(default=None),
+    time_to: str | None = Query(default=None),
+    preferred_time: str | None = Query(default=None),
+    limit: int = Query(default=12, ge=1, le=50),
+    db: Session = Depends(get_db),
+    _: int = Depends(get_current_user_id),
+) -> dict[str, object]:
+    """Propose les meilleurs créneaux libres selon les critères (plages, salles, médecin, horaires)."""
+    if end < start or (end - start).days > 61:
+        raise HTTPException(status_code=422, detail="Période invalide (62 jours maximum).")
+    try:
+        allowed_days = (
+            {int(item) for item in weekdays.split(",") if item.strip() != ""} if weekdays else set(range(7))
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail="Jours invalides.") from error
+    window_start = _parse_clock(time_from, time(0, 0))
+    window_end = _parse_clock(time_to, time(23, 59))
+    preferred = _parse_clock(preferred_time, time(0, 0)) if preferred_time else None
+    zone = ZoneInfo(AGENDA_TIMEZONE)
+    now = datetime.now(zone)
+
+    rooms = db.execute(
+        text(
+            "SELECT id,name,color,max_parallel FROM rooms WHERE active=true "
+            "AND (CAST(:room_id AS uuid) IS NULL OR id=CAST(:room_id AS uuid)) ORDER BY name"
+        ),
+        {"room_id": room_id},
+    ).mappings().all()
+    blocks = db.execute(
+        text(
+            f"SELECT {BLOCK_COLUMNS} {BLOCK_FROM} WHERE b.active "
+            "AND (CAST(:doctor_id AS uuid) IS NULL OR b.resource_id IS NULL "
+            "OR b.resource_id=CAST(:doctor_id AS uuid)) "
+            "AND (b.valid_to IS NULL OR b.valid_to>=:start) "
+            "AND (b.valid_from IS NULL OR b.valid_from<=:end)"
+        ),
+        {"doctor_id": doctor_id, "start": start, "end": end},
+    ).mappings().all()
+    restricted = {
+        row for row in db.execute(
+            text("SELECT DISTINCT room_id FROM scheduling_blocks WHERE active")
+        ).scalars()
+    }
+    range_start = datetime.combine(start, time(0, 0), zone)
+    range_end = datetime.combine(end + timedelta(days=1), time(0, 0), zone)
+    busy = db.execute(
+        text(
+            "SELECT room_id,doctor_id,starts_at,ends_at FROM appointments "
+            "WHERE starts_at<:end AND ends_at>:start "
+            "AND state NOT IN ('CANCELLED','NO_SHOW','POSTPONED')"
+        ),
+        {"start": range_start, "end": range_end},
+    ).mappings().all()
+    doctors = {
+        row["id"]: row["display_name"]
+        for row in db.execute(text("SELECT id,display_name FROM people_resources")).mappings()
+    }
+
+    def occupied(room: UUID, doctor: UUID | None, s: datetime, e: datetime, limit: int) -> bool:
+        room_items = [(i["starts_at"], i["ends_at"]) for i in busy if i["room_id"] == room]
+        if exceeds_parallel(room_items, s, e, limit):
+            return True
+        if doctor is None:
+            return False
+        doctor_items = [(i["starts_at"], i["ends_at"]) for i in busy if i["doctor_id"] == doctor]
+        return exceeds_parallel(doctor_items, s, e, limit)
+
+    candidates: list[dict[str, object]] = []
+    day = start
+    while day <= end:
+        if day.weekday() in allowed_days:
+            for room in rooms:
+                if room["id"] in restricted:
+                    slots = [
+                        (
+                            time.fromisoformat(b["start_time"]), time.fromisoformat(b["end_time"]),
+                            b["slot_minutes"], b["resource_id"], b["label"], b["color"] or b["room_color"],
+                        )
+                        for b in blocks
+                        if b["room_id"] == room["id"] and b["weekday"] == day.weekday()
+                        and (b["valid_from"] is None or b["valid_from"] <= day)
+                        and (b["valid_to"] is None or b["valid_to"] >= day)
+                    ]
+                else:
+                    slots = [(time(8, 0), time(18, 0), 30, None, None, room["color"])]
+                for block_start, block_end, step, block_doctor, label, color in slots:
+                    length = timedelta(minutes=duration or step)
+                    cursor = datetime.combine(day, block_start)
+                    limit_end = datetime.combine(day, block_end)
+                    while cursor + length <= limit_end:
+                        slot_end = cursor + length
+                        s = cursor.replace(tzinfo=zone)
+                        e = slot_end.replace(tzinfo=zone)
+                        doctor = doctor_id or block_doctor
+                        if (
+                            s > now
+                            and cursor.time() >= window_start
+                            and slot_end.time() <= window_end
+                            and not occupied(room["id"], doctor, s, e, room["max_parallel"])
+                        ):
+                            candidates.append(
+                                {
+                                    "starts_at": s.isoformat(),
+                                    "ends_at": e.isoformat(),
+                                    "room_id": room["id"],
+                                    "room": room["name"],
+                                    "doctor_id": doctor,
+                                    "doctor": doctors.get(doctor),
+                                    "label": label,
+                                    "color": color,
+                                    "_sort": cursor,
+                                }
+                            )
+                        cursor += timedelta(minutes=step)
+        day += timedelta(days=1)
+
+    if preferred is not None:
+        target = preferred.hour * 60 + preferred.minute
+        candidates.sort(
+            key=lambda c: (
+                c["_sort"].date(),
+                abs(c["_sort"].hour * 60 + c["_sort"].minute - target),
+                c["_sort"],
+            )
+        )
+    else:
+        candidates.sort(key=lambda c: c["_sort"])
+    total = len(candidates)
+    # Un seul créneau par horaire : les autres salles/médecins libres au même moment sont comptés.
+    selected: list[dict[str, object]] = []
+    by_start: dict[str, dict[str, object]] = {}
+    for item in candidates:
+        existing = by_start.get(item["starts_at"])
+        if existing is not None:
+            existing["alternatives"] += 1
+            continue
+        if len(selected) >= limit:
+            continue
+        item["alternatives"] = 0
+        by_start[item["starts_at"]] = item
+        selected.append(item)
+    for item in selected:
+        del item["_sort"]
+    return {"total": total, "suggestions": selected}
+
+
+@router.get("/appointment-types")
+def list_appointment_types(
+    db: Session = Depends(get_db),
+    _: int = Depends(get_current_user_id),
+) -> list[dict[str, object]]:
+    return [
+        dict(row)
+        for row in db.execute(
+            text(
+                "SELECT id,name,duration_minutes,color FROM appointment_types "
+                "WHERE active=true ORDER BY name"
+            )
+        ).mappings()
+    ]
+
+
+@router.post(
+    "/appointment-types",
+    status_code=201,
+    dependencies=[Depends(require_admin)],
+)
+def create_appointment_type(
+    payload: AppointmentTypeCreate,
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    try:
+        row_id = db.execute(
+            text(
+                "INSERT INTO appointment_types(name,duration_minutes,color) "
+                "VALUES(:name,:duration_minutes,:color) RETURNING id"
+            ),
+            payload.model_dump(),
+        ).scalar_one()
+        db.commit()
+        return {"id": str(row_id)}
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Un type de rendez-vous porte déjà ce nom.",
+        ) from error
+
+
+@router.get("/resources")
+def list_resources(
+    db: Session = Depends(get_db),
+    _: int = Depends(get_current_user_id),
+) -> list[dict[str, object]]:
+    return [
+        dict(row)
+        for row in db.execute(
+            text(
+                "SELECT id,kind,display_name FROM people_resources "
+                "WHERE active=true ORDER BY kind,display_name"
+            )
+        ).mappings()
+    ]
+
+
+@router.post("/resources", status_code=201, dependencies=[Depends(require_admin)])
+def create_resource(
+    payload: ResourceCreate,
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    try:
+        row_id = db.execute(
+            text(
+                "INSERT INTO people_resources(kind,display_name) "
+                "VALUES(:kind,:display_name) RETURNING id"
+            ),
+            payload.model_dump(),
+        ).scalar_one()
+        db.commit()
+        return {"id": str(row_id)}
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Cette ressource existe déjà pour ce type.",
+        ) from error
+
+
+def _patch_row(
+    db: Session, table: str, row_id: UUID, fields: dict[str, object], label: str, duplicate: str
+) -> dict[str, object]:
+    if "name" in fields:
+        fields["name"] = str(fields["name"]).strip()
+    if "display_name" in fields:
+        fields["display_name"] = str(fields["display_name"]).strip()
+    if not fields or any(value == "" for value in fields.values()):
+        raise HTTPException(status_code=422, detail="Paramètres de modification invalides.")
+    assignments = ",".join(f"{name}=:{name}" for name in fields)
+    try:
+        updated = db.execute(
+            text(f"UPDATE {table} SET {assignments} WHERE id=:id AND active=true"),
+            {**fields, "id": row_id},
+        ).rowcount
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=duplicate) from error
+    if not updated:
+        raise HTTPException(status_code=404, detail=f"{label} introuvable.")
+    db.commit()
+    return fields
+
+
+@router.patch("/appointment-types/{type_id}", dependencies=[Depends(require_admin)])
+def update_appointment_type(
+    type_id: UUID,
+    payload: AppointmentTypeUpdate,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    return _patch_row(
+        db,
+        "appointment_types",
+        type_id,
+        payload.model_dump(exclude_unset=True, exclude_none=True),
+        "Type de rendez-vous",
+        "Un type de rendez-vous porte déjà ce nom.",
+    )
+
+
+@router.patch("/resources/{resource_id}", dependencies=[Depends(require_admin)])
+def update_resource(
+    resource_id: UUID,
+    payload: ResourceUpdate,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    return _patch_row(
+        db,
+        "people_resources",
+        resource_id,
+        payload.model_dump(exclude_unset=True, exclude_none=True),
+        "Ressource",
+        "Cette ressource existe déjà pour ce type.",
+    )
+
+
+LOCATION_TREE_CTE = (
+    "WITH RECURSIVE tree(id,name,parent_id,path,depth,root_id) AS ("
+    "SELECT id,name,parent_id,name::text,0,id FROM stock_locations "
+    "WHERE parent_id IS NULL AND active=true "
+    "UNION ALL "
+    "SELECT l.id,l.name,l.parent_id,tree.path||' › '||l.name,tree.depth+1,tree.root_id "
+    "FROM stock_locations l JOIN tree ON l.parent_id=tree.id WHERE l.active=true)"
+)
+
+
+@router.get("/stock-locations")
+def list_stock_locations(
+    db: Session = Depends(get_db),
+    _: int = Depends(get_current_user_id),
+) -> list[dict[str, object]]:
+    rows = db.execute(
+        text(
+            LOCATION_TREE_CTE
+            + " SELECT t.id,t.name,t.parent_id,t.path,t.depth,"
+            "COALESCE(array_agg(slr.room_id) FILTER (WHERE slr.room_id IS NOT NULL),'{}') AS room_ids "
+            "FROM tree t LEFT JOIN stock_location_rooms slr ON slr.stock_location_id=t.id "
+            "GROUP BY t.id,t.name,t.parent_id,t.path,t.depth ORDER BY t.path"
+        )
+    ).mappings()
+    return [
+        {**dict(row), "room_ids": [str(room_id) for room_id in row["room_ids"]]}
+        for row in rows
+    ]
+
+
+def _replace_location_rooms(db: Session, location_id: UUID, room_ids: list[UUID]) -> None:
+    db.execute(
+        text("DELETE FROM stock_location_rooms WHERE stock_location_id=:id"),
+        {"id": location_id},
+    )
+    for room_id in dict.fromkeys(room_ids):
+        db.execute(
+            text(
+                "INSERT INTO stock_location_rooms(stock_location_id,room_id) "
+                "VALUES(:l,:r)"
+            ),
+            {"l": location_id, "r": room_id},
+        )
+
+
+@router.post(
+    "/stock-locations",
+    status_code=201,
+    dependencies=[Depends(require_admin)],
+)
+def create_stock_location(
+    payload: StockLocationCreate,
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    try:
+        row_id = db.execute(
+            text(
+                "INSERT INTO stock_locations(name,parent_id) VALUES(:name,:parent_id) "
+                "RETURNING id"
+            ),
+            {"name": payload.name, "parent_id": payload.parent_id},
+        ).scalar_one()
+        _replace_location_rooms(db, row_id, payload.room_ids)
+        db.commit()
+        return {"id": str(row_id)}
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Cet emplacement existe déjà à ce niveau, ou le parent/la salle est invalide.",
+        ) from error
+
+
+@router.put(
+    "/stock-locations/{location_id}/rooms",
+    dependencies=[Depends(require_admin)],
+)
+def set_stock_location_rooms(
+    location_id: UUID,
+    payload: StockLocationRooms,
+    db: Session = Depends(get_db),
+) -> dict[str, object]:
+    exists = db.execute(
+        text("SELECT 1 FROM stock_locations WHERE id=:id AND active=true"),
+        {"id": location_id},
+    ).first()
+    if exists is None:
+        raise HTTPException(status_code=404, detail="Emplacement introuvable.")
+    try:
+        _replace_location_rooms(db, location_id, payload.room_ids)
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Salle invalide.") from error
+    return {"ok": True, "room_ids": [str(room_id) for room_id in dict.fromkeys(payload.room_ids)]}
+
+
+@router.get("/stock-items")
+def list_stock_items(
+    db: Session = Depends(get_db),
+    _: int = Depends(get_current_user_id),
+) -> list[dict[str, object]]:
+    return [
+        dict(row)
+        for row in db.execute(
+            text(
+                "SELECT id,name,sku,track_lot,track_serial,consumable "
+                "FROM stock_items WHERE active=true ORDER BY name"
+            )
+        ).mappings()
+    ]
+
+
+@router.post("/stock-items", status_code=201, dependencies=[Depends(require_admin)])
+def create_stock_item(
+    payload: StockItemCreate,
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    try:
+        row_id = db.execute(
+            text(
+                "INSERT INTO stock_items(name,sku,track_lot,track_serial,consumable) "
+                "VALUES(:name,:sku,:track_lot,:track_serial,:consumable) RETURNING id"
+            ),
+            payload.model_dump(),
+        ).scalar_one()
+        db.commit()
+        return {"id": str(row_id)}
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Un article porte déjà ce code SKU.",
+        ) from error
+
+
+@router.get("/stock-units")
+def list_stock_units(
+    room_id: UUID | None = Query(default=None),
+    db: Session = Depends(get_db),
+    _: int = Depends(get_current_user_id),
+) -> list[dict[str, object]]:
+    # Une salle voit ses emplacements ainsi que leurs sous-emplacements.
+    room_filter = (
+        "AND su.stock_location_id IN (WITH RECURSIVE reach(id) AS ("
+        "SELECT stock_location_id FROM stock_location_rooms WHERE room_id=:room_id "
+        "UNION SELECT l.id FROM stock_locations l JOIN reach ON l.parent_id=reach.id) "
+        "SELECT id FROM reach) "
+        if room_id
+        else ""
+    )
+    return [
+        dict(row)
+        for row in db.execute(
+            text(
+                LOCATION_TREE_CTE
+                + " SELECT su.id,su.stock_location_id,t.path AS location_name,"
+                "su.stock_item_id,si.name AS item_name,su.lot_number,su.serial_number,"
+                "su.expires_on,su.quantity,su.reserved_quantity,"
+                "(su.quantity-su.reserved_quantity) AS available_quantity "
+                "FROM stock_units su JOIN tree t ON t.id=su.stock_location_id "
+                "JOIN stock_items si ON si.id=su.stock_item_id "
+                "WHERE si.active=true AND su.quantity>su.reserved_quantity "
+                + room_filter
+                + "ORDER BY t.path,si.name,su.expires_on NULLS LAST,su.lot_number"
+            ),
+            {"room_id": room_id} if room_id else {},
+        ).mappings()
+    ]
+
+
+@router.post("/stock-units", status_code=201)
+def create_stock_unit(
+    payload: StockUnitCreate,
+    db: Session = Depends(get_db),
+    uid: int = Depends(require_admin),
+) -> dict[str, str]:
+    item = db.execute(
+        text(
+            "SELECT track_lot,track_serial FROM stock_items "
+            "WHERE id=:id AND active=true"
+        ),
+        {"id": payload.stock_item_id},
+    ).mappings().first()
+    if item is None:
+        raise HTTPException(status_code=404, detail="Article de stock introuvable.")
+    if item["track_lot"] and not payload.lot_number:
+        raise HTTPException(status_code=422, detail="Le numéro de lot est obligatoire.")
+    if item["track_serial"] and not payload.serial_number:
+        raise HTTPException(
+            status_code=422,
+            detail="Le numéro de série est obligatoire.",
+        )
+    if not item["track_serial"] and payload.serial_number:
+        raise HTTPException(
+            status_code=422,
+            detail="Cet article ne suit pas les numéros de série.",
+        )
+    try:
+        unit_id = db.execute(
+            text(
+                "INSERT INTO stock_units"
+                "(stock_location_id,stock_item_id,lot_number,serial_number,expires_on,quantity) "
+                "VALUES(:stock_location_id,:stock_item_id,:lot_number,:serial_number,"
+                ":expires_on,:quantity) RETURNING id"
+            ),
+            payload.model_dump(),
+        ).scalar_one()
+        if payload.quantity > 0:
+            db.execute(
+                text(
+                    "INSERT INTO stock_movements"
+                    "(stock_unit_id,kind,quantity,created_by,comment) "
+                    "VALUES(:unit_id,'ADJUSTMENT',:quantity,:user_id,'Stock initial')"
+                ),
+                {
+                    "unit_id": unit_id,
+                    "quantity": payload.quantity,
+                    "user_id": uid,
+                },
+            )
+        db.commit()
+        return {"id": str(unit_id)}
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Emplacement, article ou numéro de série invalide/déjà utilisé.",
+        ) from error
+
+
+@router.get("/day-view")
+def day_view(
+    day: date = Query(...),
+    db: Session = Depends(get_db),
+    _: int = Depends(get_current_user_id),
+) -> list[dict[str, object]]:
+    rows = db.execute(
+        text(
+            "SELECT a.id,a.patient_id,p.nom,p.prenom,a.starts_at,a.ends_at,a.state,"
+            "a.phone,a.notes,r.name AS room,loc.name AS current_location,"
+            "loc.kind AS location_kind,at.name AS appointment_type,"
+            "d.display_name AS doctor,o.display_name AS operator,"
+            "(SELECT rn.comment FROM recovery_notes rn "
+            "WHERE rn.appointment_id=a.id ORDER BY rn.created_at DESC LIMIT 1) "
+            "AS recovery_comment "
+            "FROM appointments a JOIN patient p ON p.id=a.patient_id "
+            "JOIN rooms r ON r.id=a.room_id "
+            "LEFT JOIN rooms loc ON loc.id=a.current_location_id "
+            "LEFT JOIN appointment_types at ON at.id=a.appointment_type_id "
+            "LEFT JOIN people_resources d ON d.id=a.doctor_id "
+            "LEFT JOIN people_resources o ON o.id=a.operator_id "
+            "WHERE a.starts_at>=CAST(:day AS date) "
+            "AND a.starts_at<(CAST(:day AS date)+interval '1 day') "
+            "ORDER BY a.starts_at"
+        ),
+        {"day": day},
+    ).mappings()
+    result = []
+    for row in rows:
+        item = dict(row)
+        item["patient_name"] = f"{row['prenom']} {row['nom']}".strip()
+        del item["prenom"]
+        del item["nom"]
+        result.append(item)
+    return result
+
+
+@router.get("/appointment-history")
+def appointment_history(
+    patient_id: int | None = Query(default=None),
+    q: str | None = Query(default=None, max_length=200),
+    date_from: date | None = Query(default=None),
+    date_to: date | None = Query(default=None),
+    limit: int = Query(default=200, ge=1, le=500),
+    db: Session = Depends(get_db),
+    _: int = Depends(get_current_user_id),
+) -> list[dict[str, object]]:
+    rows = db.execute(
+        text(
+            "SELECT a.id,a.patient_id,p.nom,p.prenom,a.starts_at,a.ends_at,a.state,"
+            "a.notes,r.name AS room,at.name AS appointment_type,"
+            "d.display_name AS doctor,o.display_name AS operator "
+            "FROM appointments a JOIN patient p ON p.id=a.patient_id "
+            "JOIN rooms r ON r.id=a.room_id "
+            "LEFT JOIN appointment_types at ON at.id=a.appointment_type_id "
+            "LEFT JOIN people_resources d ON d.id=a.doctor_id "
+            "LEFT JOIN people_resources o ON o.id=a.operator_id "
+            "WHERE (CAST(:patient_id AS integer) IS NULL OR a.patient_id=CAST(:patient_id AS integer)) "
+            "AND (CAST(:date_from AS date) IS NULL OR a.starts_at>=CAST(:date_from AS date)) "
+            "AND (CAST(:date_to AS date) IS NULL OR a.starts_at<CAST(:date_to AS date)+interval '1 day') "
+            "AND (CAST(:q AS text) IS NULL OR (p.nom||' '||p.prenom||' '||COALESCE(at.name,'')||' '||"
+            "COALESCE(d.display_name,'')||' '||r.name) ILIKE '%'||CAST(:q AS text)||'%') "
+            "ORDER BY a.starts_at DESC LIMIT :limit"
+        ),
+        {"patient_id": patient_id, "date_from": date_from, "date_to": date_to,
+         "q": (q or "").strip() or None, "limit": limit},
+    ).mappings()
+    result = []
+    for row in rows:
+        item = dict(row)
+        item["patient_name"] = f"{row['prenom']} {row['nom']}".strip()
+        del item["prenom"]
+        del item["nom"]
+        result.append(item)
+    return result
+
+
+@router.get("/range-view")
+def range_view(
+    start: datetime = Query(...),
+    end: datetime = Query(...),
+    room_id: UUID | None = Query(default=None),
+    doctor_id: UUID | None = Query(default=None),
+    db: Session = Depends(get_db),
+    _: int = Depends(get_current_user_id),
+) -> list[dict[str, object]]:
+    if end <= start or (end - start).days > 62:
+        raise HTTPException(status_code=422, detail="Plage de dates invalide (62 jours maximum).")
+    rows = db.execute(
+        text(
+            "SELECT a.id,a.patient_id,p.nom,p.prenom,a.starts_at,a.ends_at,a.state,"
+            "a.notes,a.room_id,a.current_location_id,loc.name AS current_location,"
+            "a.appointment_type_id,a.doctor_id,a.operator_id,a.phone,"
+            "r.name AS room,r.color AS room_color,"
+            "at.name AS appointment_type,at.color AS type_color,"
+            "d.display_name AS doctor,o.display_name AS operator "
+            "FROM appointments a JOIN patient p ON p.id=a.patient_id "
+            "JOIN rooms r ON r.id=a.room_id "
+            "LEFT JOIN rooms loc ON loc.id=a.current_location_id "
+            "LEFT JOIN appointment_types at ON at.id=a.appointment_type_id "
+            "LEFT JOIN people_resources d ON d.id=a.doctor_id "
+            "LEFT JOIN people_resources o ON o.id=a.operator_id "
+            "WHERE a.starts_at<:end AND a.ends_at>:start "
+            "AND (CAST(:room_id AS uuid) IS NULL OR a.room_id=CAST(:room_id AS uuid)) "
+            "AND (CAST(:doctor_id AS uuid) IS NULL OR a.doctor_id=CAST(:doctor_id AS uuid)) "
+            "ORDER BY a.starts_at"
+        ),
+        {"start": start, "end": end, "room_id": room_id, "doctor_id": doctor_id},
+    ).mappings()
+    result = []
+    for row in rows:
+        item = dict(row)
+        item["patient_name"] = f"{row['prenom']} {row['nom']}".strip()
+        del item["prenom"]
+        del item["nom"]
+        result.append(item)
+    return result
+
+
+@router.post("/appointments", status_code=201)
+def create_appointment(
+    payload: AppointmentCreate,
+    db: Session = Depends(get_db),
+    uid: int = Depends(get_current_user_id),
+) -> dict[str, str]:
+    if get_patient_contact(db, payload.patient_id) is None:
+        raise HTTPException(status_code=404, detail="Patient introuvable.")
+    ensure_slot_allowed(db, payload.room_id, payload.doctor_id, payload.starts_at, payload.ends_at)
+    ensure_room_capacity(db, payload.room_id, payload.patient_id, payload.starts_at, payload.ends_at)
+    try:
+        appointment_id = db.execute(
+            text(
+                "INSERT INTO appointments"
+                "(patient_id,appointment_type_id,room_id,doctor_id,operator_id,"
+                "starts_at,ends_at,phone,notes,current_location_id,created_by) "
+                "VALUES(:patient_id,:appointment_type_id,:room_id,:doctor_id,"
+                ":operator_id,:starts_at,:ends_at,:phone,:notes,:room_id,:created_by) "
+                "RETURNING id"
+            ),
+            {**payload.model_dump(), "created_by": uid},
+        ).scalar_one()
+        db.execute(
+            text(
+                "INSERT INTO appointment_status_history"
+                "(appointment_id,new_state,changed_by,comment) "
+                "VALUES(:appointment_id,'PLANNED',:user_id,'Création du rendez-vous')"
+            ),
+            {"appointment_id": appointment_id, "user_id": uid},
+        )
+        _audit(db, appointment_id, "CREATE", uid, None, _snapshot(db, appointment_id))
+        db.commit()
+        return {"id": str(appointment_id)}
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="La salle est occupée sur cette plage ou une référence est invalide.",
+        ) from error
+
+
+AUDIT_FIELDS = (
+    "patient_id,appointment_type_id,room_id,doctor_id,operator_id,starts_at,ends_at,phone,notes,state"
+)
+
+
+def _snapshot(db: Session, appointment_id: UUID) -> dict | None:
+    row = db.execute(
+        text(f"SELECT {AUDIT_FIELDS} FROM appointments WHERE id=:id"), {"id": appointment_id}
+    ).mappings().first()
+    return json.loads(json.dumps(dict(row), default=str)) if row else None
+
+
+def _audit(db: Session, appointment_id: UUID, action: str, uid: int,
+           before: dict | None, after: dict | None) -> None:
+    db.execute(
+        text(
+            "INSERT INTO appointment_audit(appointment_id,action,changed_by,before_data,after_data) "
+            "VALUES(:id,:action,:uid,CAST(:before AS jsonb),CAST(:after AS jsonb))"
+        ),
+        {
+            "id": appointment_id, "action": action, "uid": uid,
+            "before": json.dumps(before) if before is not None else None,
+            "after": json.dumps(after) if after is not None else None,
+        },
+    )
+
+
+@router.get("/appointments/{appointment_id}/audit")
+def appointment_audit(
+    appointment_id: UUID,
+    db: Session = Depends(get_db),
+    _: int = Depends(get_current_user_id),
+) -> list[dict[str, object]]:
+    return [
+        dict(row)
+        for row in db.execute(
+            text(
+                "SELECT a.id,a.action,a.changed_at,a.changed_by,u.username AS changed_by_name,"
+                "a.before_data,a.after_data FROM appointment_audit a "
+                "LEFT JOIN useraccount u ON u.id=a.changed_by "
+                "WHERE a.appointment_id=:id ORDER BY a.changed_at DESC,a.id DESC"
+            ),
+            {"id": appointment_id},
+        ).mappings()
+    ]
+
+
+@router.get("/appointments/{appointment_id}/day-follow-up")
+def appointment_day_follow_up(
+    appointment_id: UUID,
+    day: date | None = Query(default=None),
+    db: Session = Depends(get_db),
+    _: int = Depends(get_current_user_id),
+) -> list[dict[str, object]]:
+    """Chronologie complète d'une journée du patient : création, statuts, transferts, notes."""
+    patient = db.execute(
+        text("SELECT patient_id FROM appointments WHERE id=:id"), {"id": appointment_id}
+    ).scalar()
+    if patient is None:
+        raise HTTPException(status_code=404, detail="Rendez-vous introuvable.")
+    in_day = "(%s AT TIME ZONE 'Europe/Brussels')::date=COALESCE(CAST(:day AS date),(now() AT TIME ZONE 'Europe/Brussels')::date)"
+    query = (
+        "SELECT * FROM ("
+        "SELECT s.changed_at AS at,'STATE' AS kind,s.appointment_id,s.old_state::text AS old_value,"
+        "s.new_state::text AS new_value,s.comment,u.username AS by_name,NULL::text AS from_room,NULL::text AS to_room "
+        "FROM appointment_status_history s JOIN appointments a ON a.id=s.appointment_id "
+        "LEFT JOIN useraccount u ON u.id=s.changed_by "
+        f"WHERE a.patient_id=:patient AND {in_day % 's.changed_at'} "
+        "UNION ALL "
+        "SELECT f.transferred_at,'TRANSFER',f.appointment_id,NULL,NULL,f.handover_comment,u.username,fr.name,tr.name "
+        "FROM patient_flow_history f JOIN appointments a ON a.id=f.appointment_id "
+        "LEFT JOIN rooms fr ON fr.id=f.from_location_id LEFT JOIN rooms tr ON tr.id=f.to_location_id "
+        "LEFT JOIN useraccount u ON u.id=f.transferred_by "
+        f"WHERE a.patient_id=:patient AND {in_day % 'f.transferred_at'} "
+        "UNION ALL "
+        "SELECT n.created_at,'NOTE',n.appointment_id,NULL,NULL,n.comment,u.username,NULL,r.name "
+        "FROM recovery_notes n JOIN appointments a ON a.id=n.appointment_id "
+        "LEFT JOIN rooms r ON r.id=n.room_id LEFT JOIN useraccount u ON u.id=n.created_by "
+        f"WHERE a.patient_id=:patient AND {in_day % 'n.created_at'} "
+        "UNION ALL "
+        "SELECT x.changed_at,'AUDIT_'||x.action,x.appointment_id,NULL,NULL,NULL,u.username,NULL,NULL "
+        "FROM appointment_audit x JOIN appointments a ON a.id=x.appointment_id "
+        "LEFT JOIN useraccount u ON u.id=x.changed_by "
+        f"WHERE a.patient_id=:patient AND x.action IN ('CREATE','MOVE','DELETE') AND {in_day % 'x.changed_at'}"
+        ") t ORDER BY at"
+    )
+    return [dict(row) for row in db.execute(text(query), {"patient": patient, "day": day}).mappings()]
+
+
+@router.get("/appointments/{appointment_id}/movements")
+def appointment_movements(
+    appointment_id: UUID,
+    day: date | None = Query(default=None),
+    db: Session = Depends(get_db),
+    _: int = Depends(get_current_user_id),
+) -> list[dict[str, object]]:
+    """Mouvements (transferts) du patient du rendez-vous pour une journée (aujourd'hui par défaut)."""
+    patient = db.execute(
+        text("SELECT patient_id FROM appointments WHERE id=:id"), {"id": appointment_id}
+    ).scalar()
+    if patient is None:
+        raise HTTPException(status_code=404, detail="Rendez-vous introuvable.")
+    return [
+        dict(row)
+        for row in db.execute(
+            text(
+                "SELECT f.id,f.appointment_id,f.transferred_at AS at,"
+                "fr.name AS from_room,tr.name AS to_room,f.handover_comment AS comment,"
+                "u.username AS by_name,s.new_state AS state "
+                "FROM patient_flow_history f "
+                "JOIN appointments a ON a.id=f.appointment_id "
+                "LEFT JOIN rooms fr ON fr.id=f.from_location_id "
+                "LEFT JOIN rooms tr ON tr.id=f.to_location_id "
+                "LEFT JOIN useraccount u ON u.id=f.transferred_by "
+                "LEFT JOIN appointment_status_history s ON s.appointment_id=f.appointment_id "
+                "AND s.changed_at=f.transferred_at "
+                "WHERE a.patient_id=:patient "
+                "AND (f.transferred_at AT TIME ZONE 'Europe/Brussels')::date="
+                "COALESCE(CAST(:day AS date),(now() AT TIME ZONE 'Europe/Brussels')::date) "
+                "ORDER BY f.transferred_at,f.id"
+            ),
+            {"patient": patient, "day": day},
+        ).mappings()
+    ]
+
+
+@router.put("/appointments/{appointment_id}")
+def update_appointment(
+    appointment_id: UUID,
+    payload: AppointmentCreate,
+    db: Session = Depends(get_db),
+    uid: int = Depends(get_current_user_id),
+) -> dict[str, bool]:
+    """Modifie ou déplace un rendez-vous (date, heure, salle, médecin, notes…)."""
+    current = db.execute(
+        text("SELECT state,starts_at,ends_at,room_id,patient_id FROM appointments WHERE id=:id"),
+        {"id": appointment_id},
+    ).mappings().first()
+    if current is None:
+        raise HTTPException(status_code=404, detail="Rendez-vous introuvable.")
+    if current["state"] in ("CANCELLED", "NO_SHOW", "DISCHARGED"):
+        raise HTTPException(status_code=409, detail="Ce rendez-vous est clôturé et ne peut plus être modifié.")
+    if get_patient_contact(db, payload.patient_id) is None:
+        raise HTTPException(status_code=404, detail="Patient introuvable.")
+    moved = (
+        current["starts_at"] != payload.starts_at
+        or current["ends_at"] != payload.ends_at
+        or current["room_id"] != payload.room_id
+    )
+    if moved:
+        ensure_slot_allowed(db, payload.room_id, payload.doctor_id, payload.starts_at, payload.ends_at)
+    if moved or current["patient_id"] != payload.patient_id:
+        ensure_room_capacity(
+            db, payload.room_id, payload.patient_id, payload.starts_at, payload.ends_at, appointment_id
+        )
+    try:
+        before = _snapshot(db, appointment_id)
+        db.execute(
+            text(
+                "UPDATE appointments SET patient_id=:patient_id,appointment_type_id=:appointment_type_id,"
+                "room_id=:room_id,"
+                "current_location_id=CASE WHEN room_id IS DISTINCT FROM :room_id "
+                "THEN :room_id ELSE current_location_id END,doctor_id=:doctor_id,"
+                "operator_id=:operator_id,starts_at=:starts_at,"
+                "ends_at=:ends_at,phone=:phone,notes=:notes,updated_at=now(),version=version+1 "
+                "WHERE id=:id"
+            ),
+            {**payload.model_dump(), "id": appointment_id},
+        )
+        _audit(db, appointment_id, "MOVE" if moved else "UPDATE", uid, before, _snapshot(db, appointment_id))
+        db.commit()
+        return {"ok": True}
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="La salle est occupée sur cette plage ou une référence est invalide.",
+        ) from error
+
+
+@router.delete("/appointments/{appointment_id}", status_code=204)
+def delete_appointment(
+    appointment_id: UUID,
+    db: Session = Depends(get_db),
+    uid: int = Depends(get_current_user_id),
+) -> None:
+    before = _snapshot(db, appointment_id)
+    state = before["state"] if before else None
+    if state is None:
+        raise HTTPException(status_code=404, detail="Rendez-vous introuvable.")
+    if state != "PLANNED":
+        raise HTTPException(
+            status_code=409,
+            detail="Seul un rendez-vous encore « Planifié » peut être supprimé ; utilisez « Annuler » sinon.",
+        )
+    try:
+        db.execute(text("DELETE FROM appointments WHERE id=:id"), {"id": appointment_id})
+        _audit(db, appointment_id, "DELETE", uid, before, None)
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Ce rendez-vous est lié à d'autres données (suivi, stock) : annulez-le plutôt.",
+        ) from error
+
+
+@router.post("/appointments/{appointment_id}/transfer")
+def transfer_patient(
+    appointment_id: UUID,
+    payload: TransferRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(get_current_user_id),
+) -> dict[str, object]:
+    return transfer(db, appointment_id, payload, uid)
+
+
+@router.post("/appointments/{appointment_id}/status")
+def set_status(
+    appointment_id: UUID,
+    payload: StatusRequest,
+    db: Session = Depends(get_db),
+    uid: int = Depends(get_current_user_id),
+) -> dict[str, bool]:
+    try:
+        appointment = db.execute(
+            text("SELECT state FROM appointments WHERE id=:id FOR UPDATE"),
+            {"id": appointment_id},
+        ).mappings().first()
+        if not appointment:
+            raise HTTPException(status_code=404, detail="Rendez-vous introuvable.")
+        db.execute(
+            text(
+                "INSERT INTO appointment_status_history"
+                "(appointment_id,old_state,new_state,changed_by,comment) "
+                "VALUES(:appointment_id,:old_state,:new_state,:user_id,:comment)"
+            ),
+            {
+                "appointment_id": appointment_id,
+                "old_state": appointment["state"],
+                "new_state": payload.new_state,
+                "user_id": uid,
+                "comment": payload.comment,
+            },
+        )
+        db.execute(
+            text(
+                "UPDATE appointments SET state=CAST(:state AS appointment_state),"
+                "updated_at=now(),version=version+1 WHERE id=:id"
+            ),
+            {"state": payload.new_state, "id": appointment_id},
+        )
+        db.commit()
+        return {"ok": True}
+    except Exception:
+        db.rollback()
+        raise
+
+
+@router.get("/follow-ups")
+def followups(
+    state: str = Query(default="TO_PLAN", pattern="^(TO_PLAN|PLANNED|CANCELLED|DONE)$"),
+    db: Session = Depends(get_db),
+    _: int = Depends(get_current_user_id),
+) -> list[dict[str, object]]:
+    return [
+        dict(row)
+        for row in db.execute(
+            text(
+                "SELECT * FROM follow_up_tasks WHERE state=CAST(:state AS follow_up_state) "
+                "ORDER BY target_date NULLS LAST,created_at"
+            ),
+            {"state": state},
+        ).mappings()
+    ]

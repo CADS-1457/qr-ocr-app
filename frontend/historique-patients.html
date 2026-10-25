@@ -67,6 +67,20 @@
     </div>
     <p id="resultCount" class="muted" aria-live="polite"></p>
   </section>
+
+  <section id="agendaHistoryCard" class="card" hidden>
+    <div class="toolbar">
+      <h2>Historique des rendez-vous</h2>
+      <a class="btn secondary" href="agenda-calendrier.html">Ouvrir l’agenda</a>
+    </div>
+    <div id="agendaHistoryStatus" class="status" aria-live="polite"></div>
+    <div class="table-wrap" style="margin-top:16px">
+      <table>
+        <thead><tr><th>Début</th><th>Fin</th><th>Patient</th><th>Type</th><th>Salle</th><th>Médecin</th><th>Statut</th><th>Notes</th></tr></thead>
+        <tbody id="agendaHistoryRows"></tbody>
+      </table>
+    </div>
+  </section>
 </main>
 <script src="auth.js"></script>
 <script>
@@ -204,8 +218,47 @@ function renderRows(entries) {
     : `${entries.length} délivrance(s) trouvée(s).`;
 }
 
+const AGENDA_STATES = {
+  PLANNED: 'Planifié', PRESENT: 'Présent', WAITING: 'En attente', IN_PROGRESS: 'En cours',
+  RECOVERY: 'Réveil', BILLING: 'Facturation', COMPLETED: 'Terminé', DISCHARGED: 'Sorti',
+  CANCELLED: 'Annulé', NO_SHOW: 'Absent'
+};
+
+async function loadAgendaHistory() {
+  const card = $('agendaHistoryCard');
+  const allowed = Boolean(currentUser) && window.AppAuth.canUseAgenda(currentUser);
+  card.hidden = !allowed;
+  if (!allowed) return;
+  const status = $('agendaHistoryStatus');
+  const body = $('agendaHistoryRows');
+  try {
+    const params = new URLSearchParams();
+    if (selectedPatientId) params.set('patient_id', String(selectedPatientId));
+    const query = $('searchInput').value.trim();
+    if (query) params.set('q', query);
+    if ($('dateFrom').value) params.set('date_from', $('dateFrom').value);
+    if ($('dateTo').value) params.set('date_to', $('dateTo').value);
+    const response = await fetch(`${API}/agenda/appointment-history?${params}`, { headers: window.AppAuth.headers() });
+    if (response.status === 403) { card.hidden = true; return; }
+    const rows = await response.json();
+    if (!response.ok) throw new Error(rows.detail || `HTTP ${response.status}`);
+    body.replaceChildren();
+    rows.forEach((row) => {
+      const tr = document.createElement('tr');
+      [formatDate(row.starts_at), formatDate(row.ends_at), row.patient_name, row.appointment_type || '—',
+        row.room, row.doctor || '—', AGENDA_STATES[row.state] || row.state, row.notes || '']
+        .forEach((value) => { const td = document.createElement('td'); td.textContent = value; tr.append(td); });
+      body.append(tr);
+    });
+    showStatus(status, rows.length ? `${rows.length} rendez-vous.` : 'Aucun rendez-vous pour ces critères.', 'info');
+  } catch (error) {
+    showStatus(status, `Impossible de charger l’historique agenda : ${error.message}`, 'error');
+  }
+}
+
 async function loadHistory() {
   if (!currentUser) return;
+  loadAgendaHistory();
   $('refreshButton').disabled = true;
   showStatus($('historyStatus'), 'Recherche des délivrances...', 'info');
   try {

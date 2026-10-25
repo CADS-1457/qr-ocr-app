@@ -44,6 +44,11 @@
     .stock-alert.orange{background:#ffedd5;color:#9a3412}
     .stock-alert.green{background:#dcfce7;color:#166534}
     .stock-alert-detail{margin-left:8px;padding:0;border:0;background:transparent;color:inherit;font:inherit;font-weight:700;text-decoration:underline;cursor:pointer}
+    .stock-alert-row{position:relative}
+    .stock-alert-row .stock-alert{padding-right:60px}
+    .stock-alert-options{position:absolute;top:calc(50% + 7px);right:14px;transform:translateY(-50%);display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:50%;color:inherit;background:rgba(255,255,255,.6)}
+    .stock-alert-options:hover{background:rgba(255,255,255,.95)}
+    .stock-alert[hidden] + .stock-alert-options{display:none}
     .stock-summary-link{display:inline-block;margin-top:12px;color:var(--primary);font-weight:700}
     .low-stock-dialog{width:min(560px,calc(100% - 32px));max-height:min(80vh,680px);overflow:auto;padding:22px;border:0;border-radius:16px;color:var(--text);box-shadow:0 18px 50px rgba(15,23,42,.25)}
     .low-stock-dialog::backdrop{background:rgba(15,23,42,.55)}
@@ -71,6 +76,7 @@
   </style>
   <link rel="stylesheet" href="app-shell.css">
   <script src="app-navigation.js" defer></script>
+  <script src="dialog-close.js" defer></script>
 </head>
 <body>
   <main>
@@ -101,15 +107,16 @@
         <div class="summary-item orange"><strong id="orangeCount">—</strong><span>À surveiller</span></div>
         <div class="summary-item green"><strong id="configuredCount">—</strong><span>Seuils configurés</span></div>
       </div>
-      <p id="stockAlert" class="stock-alert" role="status" aria-live="polite" hidden></p>
-      <a id="stockSummaryLink" class="stock-summary-link admin-summary-link" href="stock-alertes.html" hidden>Gérer les seuils de stock</a>
+      <div class="stock-alert-row">
+        <p id="stockAlert" class="stock-alert" role="status" aria-live="polite" hidden></p>
+        <a id="stockOptionsLink" class="stock-alert-options" href="stock-alertes.html" title="Options : gérer les seuils de stock" aria-label="Options : gérer les seuils de stock" hidden><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></a>
+      </div>
     </section>
 
     <dialog id="lowStockDialog" class="low-stock-dialog" aria-labelledby="lowStockTitle" aria-describedby="lowStockDescription">
       <h2 id="lowStockTitle">Produits à surveiller</h2>
       <p id="lowStockDescription">Liste des produits en alerte rouge ou dans la zone de vigilance orange.</p>
       <ul id="lowStockList" class="low-stock-list"></ul>
-      <div class="dialog-actions"><button id="closeLowStockDialog" class="secondary" type="button">Fermer</button></div>
     </dialog>
 
     <section id="pageOptions" class="card" aria-labelledby="pagesTitle" hidden>
@@ -126,6 +133,7 @@
         <section class="page-group">
           <h3>Patients</h3>
           <div class="page-grid">
+            <a id="agendaCard" class="page-card" href="agenda.html"><strong>Agenda et parcours patient</strong><span>Planifier les rendez-vous et suivre le parcours de soins.</span></a>
             <a class="page-card" href="historique-patients.html"><strong>Historique patient</strong><span>Rechercher les produits délivrés aux patients.</span></a>
             <a class="page-card" href="patients.html"><strong>Fiches patients</strong><span>Consulter et mettre à jour le signalétique patient.</span></a>
             <a class="page-card" href="delivrance.html"><strong>Délivrer à un patient</strong><span>Associer un produit à un patient et mettre à jour le stock.</span></a>
@@ -142,6 +150,7 @@
         <section class="page-group" id="administrationGroup" hidden>
           <h3>Administration</h3>
           <div class="page-grid">
+            <a id="userManagementOption" class="page-card" href="utilisateurs.html" hidden><strong>Gestion des utilisateurs</strong><span>Créer, modifier, activer ou supprimer les comptes.</span></a>
             <a id="superadminOption" class="page-card" href="superadmin.html" hidden><strong>Journal SuperAdmin</strong><span>Consulter l’ensemble des créations, modifications et suppressions.</span></a>
           </div>
         </section>
@@ -175,9 +184,13 @@
       accountBar.hidden = !signedIn;
       pageOptions.hidden = !signedIn;
       stockSummary.hidden = !signedIn;
+      const agendaCard = document.getElementById('agendaCard');
+      agendaCard.hidden = !window.AppAuth.canUseAgenda(currentUser);
+      agendaCard.style.display = agendaCard.hidden ? 'none' : '';
+      document.getElementById('userManagementOption').hidden = !['admin', 'superadmin'].includes(currentUser?.role);
       document.getElementById('superadminOption').hidden = currentUser?.role !== 'superadmin';
-      document.getElementById('administrationGroup').hidden = currentUser?.role !== 'superadmin';
-      document.getElementById('stockSummaryLink').hidden = !['admin', 'superadmin'].includes(currentUser?.role);
+      document.getElementById('administrationGroup').hidden = !['admin', 'superadmin'].includes(currentUser?.role);
+      document.getElementById('stockOptionsLink').hidden = !['admin', 'superadmin'].includes(currentUser?.role);
       signedInAs.textContent = signedIn
         ? `Connecté : ${currentUser.username} (${
           currentUser.role === 'superadmin' ? 'SuperAdmin'
@@ -273,10 +286,6 @@
       }
       document.getElementById('lowStockDialog').showModal();
     }
-
-    document.getElementById('closeLowStockDialog').addEventListener('click', () => {
-      document.getElementById('lowStockDialog').close();
-    });
 
     loginForm.addEventListener('submit', async (event) => {
       event.preventDefault();
