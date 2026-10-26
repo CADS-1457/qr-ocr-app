@@ -1,5 +1,9 @@
 services:
 
+  # ============================================================
+  # PostgreSQL
+  # ============================================================
+
   db:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -21,6 +25,36 @@ services:
       retries: 10
 
 
+  # ============================================================
+  # Redis / file de travaux OCR
+  # ============================================================
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+
+    volumes:
+      - redis_data:/data
+
+    healthcheck:
+      test:
+        - CMD
+        - redis-cli
+        - ping
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+
+  # ============================================================
+  # API FastAPI
+  # ============================================================
+
   api:
     build:
       context: ./backend
@@ -34,10 +68,72 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
 
+      REDIS_URL: redis://redis:6379/0
+      OCR_QUEUE_NAME: ocr
+      UPLOAD_DIRECTORY: /app/uploads
+
+    volumes:
+      - ocr_uploads:/app/uploads
+
     depends_on:
       db:
         condition: service_healthy
 
+      redis:
+        condition: service_healthy
+
+    # PAS de ports:
+    # FastAPI reste accessible uniquement sur le réseau Docker.
+    # Nginx utilise http://api:8000
+
+
+  # ============================================================
+  # Worker PaddleOCR / PP-StructureV3
+  # ============================================================
+
+  ocr-worker:
+    build:
+      context: ./ocr-worker
+      dockerfile: Dockerfile
+
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+
+      REDIS_URL: redis://redis:6379/0
+      OCR_QUEUE_NAME: ocr
+
+      UPLOAD_DIRECTORY: /app/uploads
+
+      OCR_LANG: fr
+
+    volumes:
+      - ocr_uploads:/app/uploads
+
+      # Conservation des modèles Paddle/PaddleX
+      - paddle_models:/root/.paddlex
+
+      # Cache éventuel des modèles/dépendances
+      - paddle_cache:/root/.cache
+
+    depends_on:
+      db:
+        condition: service_healthy
+
+      redis:
+        condition: service_healthy
+
+    # PAS de ports:
+    # Le worker doit rester totalement privé.
+
+
+  # ============================================================
+  # Frontend Nginx
+  # ============================================================
 
   frontend:
     build:
@@ -53,5 +149,18 @@ services:
       - api
 
 
+# ==============================================================
+# Volumes persistants
+# ==============================================================
+
 volumes:
+
   postgres_data:
+
+  redis_data:
+
+  ocr_uploads:
+
+  paddle_models:
+
+  paddle_cache:
