@@ -32,9 +32,11 @@
 
   async function loadReference() {
     if (loaded) return;
-    const [rooms, typeRows, resources] = await Promise.all([
+    const [rooms, typeRows, resources, groups] = await Promise.all([
       request("/rooms"), request("/appointment-types"), request("/resources"),
+      request("/agenda-groups").catch(() => []),
     ]);
+    fill(field("#asGroup"), groups, "Aucun");
     types = typeRows;
     fill(field("#asRoom"), rooms, "Toutes les salles");
     fill(field("#asType"), typeRows, "Sans type");
@@ -83,11 +85,12 @@
       choose.type = "button";
       choose.textContent = "Choisir";
       choose.addEventListener("click", () => {
+        const pickedRestoreId = restoreId;
         dialog.close();
         document.dispatchEvent(new CustomEvent("assistant:pick", {
           detail: {
             start: item.starts_at, duration: Math.round((end - start) / 60000), roomId: item.room_id,
-            doctorId: item.doctor_id || "", typeId: field("#asType").value,
+            doctorId: item.doctor_id || "", typeId: field("#asType").value, restoreId: pickedRestoreId,
           },
         }));
       });
@@ -103,9 +106,9 @@
       start: field("#asFrom").value,
       end: field("#asTo").value,
       duration: Number(field("#asDuration").value) || 0,
-      limit: Math.min(50, Math.max(1, Number(field("#asCount").value) || 12)),
+      limit: 12,
     });
-    const optional = { room_id: "#asRoom", doctor_id: "#asDoctor", time_from: "#asTimeFrom", time_to: "#asTimeTo", preferred_time: "#asPreferred" };
+    const optional = { room_id: "#asRoom", group_id: "#asGroup", doctor_id: "#asDoctor", time_from: "#asTimeFrom", time_to: "#asTimeTo", preferred_time: "#asPreferred" };
     for (const [key, selector] of Object.entries(optional)) {
       if (field(selector).value) params.set(key, field(selector).value);
     }
@@ -134,6 +137,28 @@
     else field("#asDuration").value = 0;
   });
 
+  let restoreId = null;
+  dialog.addEventListener("close", () => { restoreId = null; });
+
+  document.addEventListener("assistant:open-restore", async (event) => {
+    const { id, typeId, duration, roomId, doctorId } = event.detail;
+    try {
+      await loadReference();
+    } catch (error) {
+      errorBox.textContent = error.message;
+    }
+    if (!field("#asFrom").value) applyPreset("month");
+    field("#asGroup").value = "";
+    field("#asType").value = typeId || "";
+    field("#asDuration").value = duration || 0;
+    field("#asRoom").value = roomId || "";
+    field("#asDoctor").value = doctorId || "";
+    results.replaceChildren();
+    summary.textContent = "";
+    restoreId = id;
+    dialog.showModal();
+  });
+
   field("#openAssistant").addEventListener("click", async () => {
     try {
       await loadReference();
@@ -141,8 +166,14 @@
       errorBox.textContent = error.message;
     }
     if (!field("#asFrom").value) applyPreset("month");
-    const filterRoom = field("#roomFilter").value;
-    const filterDoctor = field("#doctorFilter").value;
+    const onlyPick = (select) => {
+      const ids = [...select.selectedOptions].map((option) => option.value).filter(Boolean);
+      return ids.length === 1 ? ids[0] : "";
+    };
+    const filterRoom = onlyPick(field("#roomFilter"));
+    const filterDoctor = onlyPick(field("#doctorFilter"));
+    const filterGroup = field("#groupFilter").value;
+    if (filterGroup) field("#asGroup").value = filterGroup;
     if (filterRoom) field("#asRoom").value = filterRoom;
     if (filterDoctor) field("#asDoctor").value = filterDoctor;
     dialog.showModal();

@@ -107,7 +107,8 @@
       const transferButton = textElement("button", "Transférer");
       transferButton.type = "button";
       transferButton.addEventListener("click", () => openTransfer(appointment));
-      card.append(transferButton);
+      const isToday = new Date(appointment.starts_at).toDateString() === new Date().toDateString();
+      if (isToday) card.append(transferButton);
       board.append(card);
     }
   }

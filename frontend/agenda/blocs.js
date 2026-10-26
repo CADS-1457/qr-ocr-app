@@ -75,6 +75,32 @@
     }
   });
 
+  const showRoom = document.querySelector("#doctorShowRoom");
+  const showToggle = document.querySelector("#doctorShowToggle");
+  const showMessage = document.querySelector("#doctorShowMessage");
+  const syncShowDoctor = () => {
+    showToggle.checked = Boolean(roomList.find((entry) => entry.id === showRoom.value)?.show_doctor);
+    showMessage.textContent = "";
+  };
+  showRoom.addEventListener("change", syncShowDoctor);
+  document.querySelector("#doctorShowSave").addEventListener("click", async () => {
+    showMessage.classList.remove("ok");
+    try {
+      if (!showRoom.value) throw new Error("Choisissez une salle.");
+      await request(`/rooms/${showRoom.value}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ show_doctor: showToggle.checked }),
+      });
+      roomList.find((entry) => entry.id === showRoom.value).show_doctor = showToggle.checked;
+      showMessage.classList.add("ok");
+      showMessage.textContent = showToggle.checked ? "Le médecin sera affiché." : "Affichage du médecin désactivé.";
+      document.dispatchEvent(new CustomEvent("blocks:changed"));
+    } catch (error) {
+      showMessage.textContent = error.message;
+    }
+  });
+
   const editRoom = document.querySelector("#editRoom");
   const editMessage = document.querySelector("#editRoomMessage");
 
@@ -313,6 +339,9 @@
       fillSelect(stateRoom, rooms, "Choisir une salle");
       stateRoom.value = document.querySelector("#roomFilter").value;
       syncDefaultState();
+      fillSelect(showRoom, rooms, "Choisir une salle");
+      showRoom.value = document.querySelector("#roomFilter").value;
+      syncShowDoctor();
       fillSelect(editRoom, rooms, "Choisir une salle");
       editRoom.value = typeof keepRoom === "string" ? keepRoom : document.querySelector("#roomFilter").value;
       syncEditRoom();

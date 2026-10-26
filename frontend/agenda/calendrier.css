@@ -912,3 +912,114 @@
 .calendar-page .lane-heads { margin: 6px -6px 0 -6px; }
 .calendar-page .lane-heads span { border-left: 0; border-right: 1px solid #94a3b8; }
 .calendar-page .lane-heads span:last-child { border-right: 0; }
+/* Exceptions de planning (fermeture, congé, malade…) */
+.calendar-page .cal-exception {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 0;
+  pointer-events: none;
+  padding: 4px 6px;
+  overflow: hidden;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--exception-color);
+  background-color: color-mix(in srgb, var(--exception-color) 14%, transparent);
+  background-image: repeating-linear-gradient(135deg, transparent 0 8px, color-mix(in srgb, var(--exception-color) 22%, transparent) 8px 10px);
+  border-left: 4px solid var(--exception-color);
+}
+.calendar-page .month-exception {
+  margin: 2px 0;
+  padding: 1px 6px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #fff;
+  background: var(--exception-color);
+  border-radius: 6px;
+}
+.calendar-page .exception-times { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.calendar-page .exception-times[hidden] { display: none; }
+
+.calendar-page .exception-start-row { display: flex; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
+.calendar-page .exception-start-row > label:first-child { flex: 1 1 200px; }
+.calendar-page .exception-start-row .checkbox { flex: 0 0 auto; margin-bottom: 12px; white-space: nowrap; }
+
+#detailDialog .planned-stock{margin-top:14px;border-top:1px solid #e2e8f0;padding-top:10px}
+#detailDialog .planned-stock h3{margin:0 0 6px;font-size:.95rem}
+#detailDialog .planned-list{list-style:none;margin:0 0 6px;padding:0}
+#detailDialog .planned-list li{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:3px 0}
+#detailDialog .planned-empty{color:#64748b}
+#detailDialog .planned-message{color:#b91c1c;margin:0}
+.calendar-page .cal-event-products{position:absolute;top:2px;right:26px;display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:#fff;color:#0f4c81}
+.calendar-page .month-event-products{display:inline-flex;vertical-align:middle;margin-left:4px}
+.calendar-page .month-event-products svg{width:12px;height:12px}
+.calendar-page .free-slots{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:4px 0 8px}
+.calendar-page .free-slots strong{flex:1 1 100%;font-size:.9rem}
+.calendar-page .free-slots button{padding:4px 10px;font-size:.85rem}
+.calendar-page .calendar-toolbar .toolbar-filters > .multi-filter{display:flex;flex-direction:column;gap:2px;font-size:12px;position:relative;font-weight:600}
+.calendar-page .multi-filter details{position:relative}
+.calendar-page .multi-filter summary{list-style:none;cursor:pointer;display:flex;align-items:center;min-height:34px;height:34px;padding:0 28px 0 10px;border:1px solid #dbe3ec;border-radius:8px;background:#fff;font-size:14px;min-width:150px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.calendar-page .multi-filter summary::-webkit-details-marker{display:none}
+.calendar-page .multi-filter summary::after{content:"";position:absolute;right:11px;top:13px;width:6px;height:6px;border-right:2px solid #0f172a;border-bottom:2px solid #0f172a;transform:rotate(45deg)}
+.calendar-page .multi-filter .multi-list{position:absolute;z-index:30;top:38px;left:0;min-width:100%;max-height:280px;overflow:auto;background:#fff;border:1px solid #dbe3ec;border-radius:8px;box-shadow:0 8px 24px rgba(15,23,42,.15);padding:4px}
+.calendar-page .multi-filter .multi-option{display:flex;align-items:center;gap:8px;padding:6px 8px;font-size:14px;font-weight:400;white-space:nowrap;cursor:pointer;border-radius:6px}
+.calendar-page .multi-filter .multi-option:hover{background:#eff6ff}
+.calendar-page .multi-filter .multi-option input{width:auto;min-height:0;margin:0}
+.calendar-page .cal-event-doctor{display:block;font-size:.8em;opacity:.85}
+.calendar-page .cal-event-doctor-icon{position:absolute;top:2px;right:50px;display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:#fff;color:#0f4c81}
+#detailDialog .planned-form{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}
+#detailDialog .planned-form input{width:100%;min-width:0;margin:0}
+#detailDialog .planned-form input[type=number]{width:100%}
+#detailDialog .planned-form button{margin:0;min-height:40px}
+#detailDialog .planned-camera{width:44px;padding:0;display:inline-flex;align-items:center;justify-content:center}
+#detailDialog .planned-remove{flex:0 0 auto;width:34px;min-height:34px;height:34px;padding:0;display:inline-flex;align-items:center;justify-content:center;background:#fff;color:#b91c1c;border:1px solid #fecaca}
+#detailDialog .planned-remove:hover{background:#b91c1c;color:#fff}
+#detailDialog .detail-actions{display:grid;grid-template-columns:repeat(6,minmax(42px,1fr));gap:8px;align-items:stretch}
+#detailDialog .detail-actions button,#detailDialog .detail-actions .button-link{box-sizing:border-box;min-width:0;width:100%;height:48px;min-height:48px;margin:0;padding:0;display:inline-flex;align-items:center;justify-content:center;border-radius:10px}
+#detailDialog .detail-actions .button-link{background:#0f4c81;color:#fff;text-decoration:none}
+#detailDialog .detail-actions .button-link:hover{background:#0b3e6b}
+#detailDialog .detail-actions button svg,#detailDialog .detail-actions .button-link svg{flex:0 0 auto}
+#detailDialog .planned-save{width:44px;height:40px;padding:0;display:inline-flex;align-items:center;justify-content:center}
+#detailDialog .planned-save svg{flex:0 0 auto}
+@media(max-width:520px){#detailDialog .detail-actions{grid-template-columns:repeat(3,minmax(42px,1fr))}}
+.deleted-appointments-dialog{width:min(820px,94vw);max-height:85vh;overflow:auto}
+.deleted-dialog-header{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.deleted-dialog-header h2{margin:0}
+.deleted-appointments-list{display:grid;gap:10px}
+.deleted-appointment{display:grid;gap:10px;padding:12px;border:1px solid #dbe3ec;border-radius:10px;background:#f8fafc}
+.deleted-appointment-info{display:grid;gap:4px}
+.deleted-appointment-info span{color:#475569}
+.deleted-appointment-actions{display:grid;grid-template-columns:auto minmax(180px,1fr) auto;gap:8px;align-items:center}
+.deleted-appointment-actions button{margin:0;min-height:40px}
+.deleted-appointment-actions input{box-sizing:border-box;width:100%;min-width:0;margin:0}
+.deleted-empty{color:#64748b}
+.deleted-slot-proposals{display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.deleted-slot-proposals:empty{display:none}
+.deleted-slot-proposals strong{flex:1 1 100%}
+.deleted-slot-proposals button{margin:0;padding:6px 10px;font-size:.9rem}
+@media(max-width:640px){.deleted-appointment-actions{grid-template-columns:1fr}.deleted-appointment-actions button{width:100%}}.deleted-search-label{display:block;margin:12px 0 4px;font-weight:600}
+#deletedAppointmentsSearch{box-sizing:border-box;width:100%;margin:0 0 8px}
+.patient-appointment{grid-template-columns:1fr auto;align-items:center}.patient-appointment button{margin:0}.patient-appointment.is-past{background:#fdecec;border-color:#f3c5c5}.patient-appointment.is-future{background:#e9f6ee;border-color:#bfe3cc}
+#patientSearchDialog .patient-past-option{display:flex;align-items:center;gap:8px;margin:10px 0;font-weight:600}#patientSearchDialog .patient-past-option input{width:auto;margin:0}
+#patientSearchDialog .patient-past-toggle{display:inline-flex;align-items:center;gap:8px;margin:10px 0}#patientSearchDialog .patient-past-toggle[aria-pressed=true]{background:#fdecec;border-color:#e8a8a8;color:#9b2c2c}
+.patient-appointment .patient-appointment-note{font-style:italic;white-space:pre-wrap;color:#334155}
+
+.cal-head .cal-zoom{display:flex;align-items:center;justify-content:center;gap:4px;padding:6px 2px}
+.calendar-page .cal-head .cal-zoom-button{margin:0;width:22px;min-width:0;height:22px;padding:0;border-radius:6px;line-height:1;font-size:15px;font-weight:700;display:inline-flex;align-items:center;justify-content:center}
+.calendar-page .cal-head .cal-zoom-button:disabled{opacity:.35;cursor:default}
+.cal-head .day-free{display:block;margin:4px auto 0;width:fit-content;padding:1px 8px;border-radius:999px;font-size:11px;font-weight:600;background:#e4f5ea;color:#1f7a3f}
+.cal-head .day-free.is-full{background:#fdecec;color:#9b2c2c}
+.calendar-page .cal-event-note{display:block;font-size:.78em;font-style:italic;opacity:.85;white-space:normal;overflow:hidden}
+.calendar-legend .legend-toggle{margin:0 0 0 auto;display:inline-flex;align-items:center;gap:6px;padding:5px 12px;font-size:13px}
+.calendar-legend .legend-toggle[aria-pressed=true]{background:#e4f5ea;border-color:#9fd3b2;color:#1f7a3f}
+#calendar.hide-booked .cal-event,#calendar.hide-booked .month-event,#calendar.hide-booked .month-more{display:none!important}
+.calendar-page .cal-slot-taken{display:none;position:absolute;box-sizing:border-box;z-index:2;border-left:5px solid #94a3b8;background:repeating-linear-gradient(135deg,#e2e8f0 0,#e2e8f0 6px,#cbd5e1 6px,#cbd5e1 8px);cursor:not-allowed;opacity:.95}
+#calendar.hide-booked .cal-slot-taken{display:block}
+.calendar-page #toggleBooked[aria-pressed=true]{background:#e4f5ea;border-color:#9fd3b2;color:#1f7a3f}
+
+.calendar-page .cal-head .is-blockable{cursor:pointer}.calendar-page .cal-head .is-blockable:hover{background:#eef4fb}
+
+.ex-room-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:4px 12px;max-height:160px;overflow:auto}.ex-room-list label{display:flex;align-items:center;gap:6px;margin:0;font-weight:400}.ex-room-list input{width:auto;margin:0}

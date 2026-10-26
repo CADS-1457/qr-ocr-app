@@ -4,7 +4,12 @@
   const api = `${window.AppAuth.API_BASE}/api/agenda`;
   const calendar = document.querySelector("#calendar");
   const message = document.querySelector("#message");
-  const HOUR_HEIGHT = 48;
+  const HOUR_HEIGHTS = [32, 40, 48, 64, 80, 104];
+  let HOUR_HEIGHT = HOUR_HEIGHTS.includes(Number(localStorage.getItem("calendarHourHeight")))
+    ? Number(localStorage.getItem("calendarHourHeight")) : 48;
+  let hideBooked = localStorage.getItem("calendarHideBooked") === "1";
+  const EYE_ICON = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+  const EYE_OFF_ICON = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.9 17.9A10.5 10.5 0 0 1 12 19C5.6 19 2 12 2 12a18 18 0 0 1 4.1-5.1M9.9 5.2A9.7 9.7 0 0 1 12 5c6.4 0 10 7 10 7a18 18 0 0 1-2.2 3.2"/><path d="M14.1 14.1a3 3 0 0 1-4.2-4.2"/><path d="m2 2 20 20"/></svg>';
   const DEFAULT_FIRST_HOUR = 7;
   const DEFAULT_LAST_HOUR = 20;
   const MAX_MONTH_EVENTS = 3;
@@ -24,6 +29,7 @@
   let cursor = startOfDay(new Date());
   let events = [];
   let availability = { blocks: [], restricted: new Set() };
+  let exceptions = [];
   let loadToken = 0;
   let currentEvent = null;
   let editingId = null;
@@ -85,20 +91,65 @@
   }
 
   function populate(select, entries, placeholder) {
-    const current = select.value;
+    const current = select.multiple ? pickedIds(select) : [select.value];
     select.replaceChildren();
-    const empty = document.createElement("option");
-    empty.value = "";
-    empty.textContent = placeholder;
-    select.append(empty);
+    if (!select.multiple) {
+      const empty = document.createElement("option");
+      empty.value = "";
+      empty.textContent = placeholder;
+      select.append(empty);
+    }
     for (const entry of entries) {
       const option = document.createElement("option");
       option.value = entry.id;
       option.textContent = entry.display_name || entry.name;
+      option.selected = current.includes(entry.id);
       select.append(option);
     }
-    select.value = current;
+    if (!select.multiple) select.value = current[0];
+    select._refresh?.();
   }
+
+  // Filtres à choix multiples (Salle, Médecin) : le <select multiple> reste la source de vérité.
+  const pickedIds = (select) => [...select.selectedOptions].map((option) => option.value).filter(Boolean);
+  const singlePick = (select) => {
+    const ids = pickedIds(select);
+    return ids.length === 1 ? ids[0] : "";
+  };
+  const roomPicks = () => pickedIds(document.querySelector("#roomFilter"));
+  const doctorPicks = () => pickedIds(document.querySelector("#doctorFilter"));
+  function clearPicks(select) {
+    for (const option of select.options) option.selected = false;
+    select._refresh?.();
+  }
+  function initMultiFilter(box) {
+    const select = box.querySelector("select");
+    const summary = box.querySelector("summary");
+    const list = box.querySelector(".multi-list");
+    select._refresh = () => {
+      list.replaceChildren();
+      for (const option of select.options) {
+        const label = el("label", "multi-option");
+        const input = document.createElement("input");
+        input.type = "checkbox";
+        input.checked = option.selected;
+        input.addEventListener("change", () => {
+          option.selected = input.checked;
+          select._refresh();
+          select.dispatchEvent(new Event("change"));
+        });
+        label.append(input, document.createTextNode(option.textContent));
+        list.append(label);
+      }
+      const names = [...select.selectedOptions].map((option) => option.textContent);
+      summary.textContent = names.length === 0 ? box.dataset.all
+        : names.length === 1 ? names[0] : `${names.length} sélectionnés`;
+    };
+    document.addEventListener("click", (event) => {
+      if (!box.contains(event.target)) box.querySelector("details").open = false;
+    });
+  }
+  document.querySelectorAll(".multi-filter").forEach(initMultiFilter);
 
   function visibleRange() {
     if (view === "day") return [cursor, addDays(cursor, 1)];
@@ -142,6 +193,124 @@
       .join(" · ");
   }
 
+  const PRODUCT_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5"/><path d="M12 13v8"/></svg>';
+  const DOCTOR_ICON = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="7" r="4"/><path d="M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1"/></svg>';
+  const TRASH_ICON = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>';
+  const SAVE_ICON = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 3h12l4 4v14H3V3z"/><path d="M7 3v6h10V3"/><path d="M7 21v-8h10v8"/></svg>';
+  const CAMERA_ICON = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>';
+  const productsTitle = (event) => `Produit(s) prévu(s) :\n${event.planned_products_label || event.planned_products}`;
+
+  function plannedStockSection(event) {
+    const section = el("section", "planned-stock");
+    section.append(el("h3", "", "Produits prévus (QR code)"));
+    const list = el("ul", "planned-list");
+    const message = el("p", "planned-message");
+    message.setAttribute("role", "status");
+    const editable = !["COMPLETED", ...CLOSED_STATES].includes(event.state);
+    const base = `/appointments/${event.id}/planned-stock`;
+
+    const render = (rows) => {
+      list.replaceChildren();
+      if (!rows.length) list.append(el("li", "planned-empty", "Aucun produit prévu."));
+      for (const row of rows) {
+        const item = el("li");
+        const detail = [row.lot_number && `lot ${row.lot_number}`, row.serial_number].filter(Boolean).join(" · ");
+        const count = Number(row.reserved_quantity > 0 ? row.reserved_quantity : row.used_quantity);
+        const qty = `${count} ${row.reserved_quantity > 0 ? "prévu" : "utilisé"}`;
+        item.append(el("span", "", `${row.item_name}${detail ? ` (${detail})` : ""} — ${qty}`));
+        if (editable && row.reserved_quantity > 0) {
+          const remove = el("button", "planned-remove");
+          remove.type = "button";
+          remove.title = "Retirer ce produit";
+          remove.setAttribute("aria-label", "Retirer ce produit");
+          remove.innerHTML = TRASH_ICON;
+          remove.addEventListener("click", () => send(`${base}/${row.stock_unit_id}`, { method: "DELETE" }));
+          item.append(remove);
+        }
+        list.append(item);
+      }
+    };
+    const send = async (path, options) => {
+      message.textContent = "";
+      try {
+        const rows = await request(path, options);
+        render(rows);
+        // L'icône du calendrier suit immédiatement l'ajout ou le retrait.
+        event.planned_products = rows.filter((row) => row.reserved_quantity > 0 || row.used_quantity > 0).length;
+        load();
+      } catch (error) {
+        message.textContent = error.message;
+      }
+    };
+    section.append(list, message);
+    if (editable) {
+      const form = el("div", "planned-form");
+      const code = el("input");
+      code.placeholder = "Scanner ou saisir le code du produit";
+      code.autocomplete = "off";
+      const qty = el("input");
+      qty.type = "number";
+      qty.min = "1";
+      qty.value = "1";
+      qty.setAttribute("aria-label", "Quantité");
+      const add = el("button", "planned-save");
+      add.type = "button";
+      add.title = "Ajouter le produit";
+      add.setAttribute("aria-label", "Ajouter le produit");
+      add.innerHTML = SAVE_ICON;
+      const camera = el("button", "planned-camera");
+      camera.type = "button";
+      camera.title = "Activer la caméra";
+      camera.setAttribute("aria-label", "Activer la caméra");
+      camera.innerHTML = CAMERA_ICON;
+      const submit = async (value) => {
+        const text = String(value || "").trim();
+        if (!text) return;
+        await send(base, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code: text, quantity: Number(qty.value) || 1 }),
+        });
+        code.value = "";
+        code.focus();
+      };
+      add.addEventListener("click", () => submit(code.value));
+      code.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          submit(code.value);
+        }
+      });
+      const reader = el("div");
+      reader.id = "plannedReader";
+      camera.addEventListener("click", async () => {
+        try {
+          if (!window.Html5Qrcode) {
+            await new Promise((resolve, reject) => {
+              const script = document.createElement("script");
+              script.src = "https://unpkg.com/html5-qrcode";
+              script.onload = resolve;
+              script.onerror = () => reject(new Error("Caméra indisponible."));
+              document.head.append(script);
+            });
+          }
+          const scanner = new window.Html5Qrcode("plannedReader");
+          await scanner.start({ facingMode: "environment" }, { fps: 10, qrbox: 220 }, async (decoded) => {
+            await scanner.stop().catch(() => {});
+            reader.replaceChildren();
+            submit(decoded);
+          });
+        } catch (error) {
+          message.textContent = error.message || "Caméra indisponible.";
+        }
+      });
+      form.append(code, camera, qty, add);
+      section.append(form, reader);
+    }
+    request(base).then(render).catch((error) => { message.textContent = error.message; });
+    return section;
+  }
+
   function openDetail(event) {
     const start = new Date(event.starts_at);
     const end = new Date(event.ends_at);
@@ -173,6 +342,7 @@
       list.append(el("dt", "", label), el("dd", "", value));
     }
     body.append(list);
+    body.append(plannedStockSection(event));
     currentEvent = event;
     if (event.current_location && event.current_location !== event.room) {
       // « Venant de » = salle précédente réelle d'après l'historique des mouvements du jour.
@@ -191,7 +361,7 @@
     document.querySelector("#detailDelete").hidden = event.state !== "PLANNED";
     document.querySelector("#detailOpen").href = `agenda.html?day=${isoDay(start)}`;
     const transferLink = document.querySelector("#detailTransfer");
-    transferLink.hidden = !open;
+    transferLink.hidden = !open || !sameDay(start, new Date());
     document.querySelector("#detailDialog").showModal();
   }
 
@@ -345,6 +515,14 @@
 
   const toMinutes = (hhmm) => Number(hhmm.slice(0, 2)) * 60 + Number(hhmm.slice(3, 5));
   const blocksOfDay = (day) => availability.blocks.filter((block) => block.date === isoDay(day));
+  const exceptionsOfDay = (day) => exceptions.filter(
+    (item) => item.start_date <= isoDay(day) && item.end_date >= isoDay(day),
+  );
+  const exceptionHours = (item) =>
+    item.start_time || item.end_time ? `${item.start_time || "00:00"}–${item.end_time || "24:00"}` : "";
+  const exceptionLabel = (item) =>
+    [item.type, exceptionHours(item), item.room_id ? item.room : "", item.resource, item.note]
+      .filter(Boolean).join(" · ");
   const zoneName = (block) =>
     [block.room, block.resource, block.label].filter(Boolean).join(" · ") || "Plage";
 
@@ -436,10 +614,58 @@
     off.append(el("i", "legend-dot legend-off"), document.createTextNode("Hors plage (non réservable)"));
     legend.append(off);
   }
+
+  const hideToggle = document.querySelector("#toggleBooked");
+  function refreshHideToggle() {
+    const title = hideBooked ? "Réafficher les rendez-vous" : "Masquer les rendez-vous déjà pris pour voir les places libres";
+    hideToggle.setAttribute("aria-pressed", String(hideBooked));
+    hideToggle.title = title;
+    hideToggle.setAttribute("aria-label", title);
+    hideToggle.innerHTML = hideBooked ? EYE_OFF_ICON : EYE_ICON;
+    calendar.classList.toggle("hide-booked", hideBooked);
+  }
+  hideToggle.addEventListener("click", () => {
+    hideBooked = !hideBooked;
+    localStorage.setItem("calendarHideBooked", hideBooked ? "1" : "0");
+    refreshHideToggle();
+  });
+  refreshHideToggle();
   const isRestrictedScope = () => {
-    const room = document.querySelector("#roomFilter").value;
-    return Boolean(room) && availability.restricted.has(room);
+    const picked = roomPicks();
+    return picked.length > 0 && picked.every((room) => availability.restricted.has(room));
   };
+
+  // Créneaux d'une plage déjà complets (plafond de la salle atteint) : [début, fin] en minutes.
+  function takenSlots(block, day, active) {
+    const step = block.slot_minutes || 30;
+    const room = rooms.find((item) => item.id === block.room_id);
+    const limit = Math.max(1, room?.max_parallel || 1);
+    const own = active.filter((event) => event.room_id === block.room_id
+      && (!block.resource_id || !event.doctor_id || event.doctor_id === block.resource_id));
+    const base = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
+    const slots = [];
+    for (let minute = toMinutes(block.start_time); minute + step <= toMinutes(block.end_time); minute += step) {
+      const from = base + minute * 60_000;
+      const to = from + step * 60_000;
+      const used = own.filter((event) => new Date(event.starts_at) < to && new Date(event.ends_at) > from).length;
+      slots.push({ from: minute, to: minute + step, past: to <= Date.now(), taken: used >= limit });
+    }
+    return slots;
+  }
+  const activeEventsOfDay = (day) =>
+    eventsOfDay(day).filter((event) => !["CANCELLED", "NO_SHOW", "POSTPONED"].includes(event.state));
+
+  // Créneaux encore libres : plages réservables moins les rendez-vous actifs (plafond de la salle), hors passé.
+  function freeSlotsOfDay(day) {
+    const dayBlocks = blocksOfDay(day);
+    if (!dayBlocks.length) return null;
+    const active = activeEventsOfDay(day);
+    let free = 0;
+    for (const block of dayBlocks) {
+      free += takenSlots(block, day, active).filter((slot) => !slot.past && !slot.taken).length;
+    }
+    return free;
+  }
 
   function renderTimeGrid(days) {
     let firstHour = DEFAULT_FIRST_HOUR;
@@ -466,14 +692,43 @@
     root.style.setProperty("--hour-height", `${HOUR_HEIGHT}px`);
 
     const head = el("div", "cal-head");
-    head.append(el("div"));
+    const zoom = el("div", "cal-zoom");
+    const zoomButton = (label, title, delta) => {
+      const button = el("button", "cal-zoom-button", label);
+      button.type = "button";
+      button.title = title;
+      button.setAttribute("aria-label", title);
+      button.disabled = !HOUR_HEIGHTS[HOUR_HEIGHTS.indexOf(HOUR_HEIGHT) + delta];
+      button.addEventListener("click", () => {
+        HOUR_HEIGHT = HOUR_HEIGHTS[HOUR_HEIGHTS.indexOf(HOUR_HEIGHT) + delta];
+        localStorage.setItem("calendarHourHeight", String(HOUR_HEIGHT));
+        render();
+      });
+      return button;
+    };
+    zoom.append(zoomButton("−", "Réduire la hauteur des lignes", -1), zoomButton("+", "Agrandir la hauteur des lignes", 1));
+    head.append(zoom);
     for (const day of days) {
       const cell = el("div", sameDay(day, new Date()) ? "is-today" : "");
       cell.append(
         document.createTextNode(day.toLocaleDateString("fr-BE", { weekday: "short" })),
         el("span", "day-number", String(day.getDate())),
       );
+      const free = freeSlotsOfDay(day);
+      if (free !== null) {
+        const badge = el("span", `day-free${free ? "" : " is-full"}`, free ? `${free} dispo` : "Complet");
+        badge.title = free ? `${free} créneau(x) libre(s)` : "Aucun créneau libre";
+        cell.append(badge);
+      }
       head.append(cell);
+      if (["admin", "superadmin"].includes(window.AppAuth.user()?.role)) {
+        cell.classList.add("is-blockable");
+        cell.title = "Cliquer pour bloquer cette journée ou une plage d’heures";
+        cell.addEventListener("click", (click) => {
+          if (click.target.closest(".lane-heads, .day-free")) return;
+          document.dispatchEvent(new CustomEvent("exceptions:open", { detail: { day: isoDay(day) } }));
+        });
+      }
     }
     root.append(head);
 
@@ -497,7 +752,8 @@
       const inGroup = groupRoomIds();
       const forcedRooms = inGroup
         ? rooms.filter((room) => inGroup.has(room.id))
-        : view === "day" && !document.querySelector("#roomFilter").value ? rooms : [];
+        : roomPicks().length > 1 ? rooms.filter((room) => roomPicks().includes(room.id))
+          : view === "day" && !roomPicks().length ? rooms : [];
       const lanes = agendaLanes(dayBlocks, dayEvents, forcedRooms);
       const laneCount = lanes.count;
       column.style.setProperty("--lanes", String(laneCount));
@@ -526,6 +782,23 @@
         });
         head.lastElementChild.append(strip);
       }
+      for (const item of exceptionsOfDay(day)) {
+        const position = item.room_id ? lanes.rooms.indexOf(item.room_id) : -1;
+        if (item.room_id && position < 0) continue;
+        const band = el("div", "cal-exception", exceptionLabel(item));
+        band.style.setProperty("--exception-color", item.color || "#64748b");
+        band.title = exceptionLabel(item);
+        const fromMin = item.start_time ? toMinutes(item.start_time) : 0;
+        const toMin = item.end_time ? toMinutes(item.end_time) : 24 * 60;
+        const bandTop = Math.max(0, (fromMin / 60 - firstHour) * HOUR_HEIGHT);
+        const bandBottom = Math.max(bandTop, (toMin / 60 - firstHour) * HOUR_HEIGHT);
+        band.style.top = `${bandTop}px`;
+        band.style.height = `${bandBottom - bandTop}px`;
+        band.style.bottom = "auto";
+        band.style.left = item.room_id ? `${(position / laneCount) * 100}%` : "0";
+        band.style.width = item.room_id ? `${100 / laneCount}%` : "100%";
+        column.append(band);
+      }
       for (const block of dayBlocks) {
         const startMin = toMinutes(block.start_time);
         const endMin = toMinutes(block.end_time);
@@ -542,6 +815,17 @@
         zone.title = `${zoneName(block)} · ${block.start_time} – ${block.end_time} · créneaux de ${block.slot_minutes} min`;
         zone.append(el("span", "cal-zone-label", zoneName(block)));
         column.append(zone);
+        // Créneaux complets : barrés et non cliquables quand les rendez-vous sont masqués.
+        for (const slot of takenSlots(block, day, activeEventsOfDay(day))) {
+          if (!slot.taken) continue;
+          const taken = el("div", "cal-slot-taken");
+          taken.title = "Créneau déjà pris";
+          taken.style.top = `${(slot.from / 60 - firstHour) * HOUR_HEIGHT}px`;
+          taken.style.height = `${((slot.to - slot.from) / 60) * HOUR_HEIGHT}px`;
+          taken.style.left = zone.style.left;
+          taken.style.width = zone.style.width;
+          column.append(taken);
+        }
       }
       column.addEventListener("click", (clickEvent) => {
         if (suppressClick) return;
@@ -592,10 +876,24 @@
           el("strong", "", event.patient_name),
           el("span", "", `${formatTime(new Date(event.starts_at))} · ${event.appointment_type || event.room}`),
         );
+        if (height >= 62 && event.notes?.trim()) block.append(el("span", "cal-event-note", event.notes.trim()));
+        if (event.show_doctor && event.doctor) {
+          block.append(el("span", "cal-event-doctor", event.doctor));
+          const badge = el("span", "cal-event-doctor-icon");
+          badge.title = `Médecin : ${event.doctor}`;
+          badge.innerHTML = DOCTOR_ICON;
+          block.append(badge);
+        }
         block.addEventListener("click", () => {
           if (!suppressClick) openDetail(event);
         });
-        if (!CLOSED_STATES.includes(event.state)) {
+        if (event.planned_products > 0) {
+          const products = el("span", "cal-event-products");
+          products.title = productsTitle(event);
+          products.innerHTML = PRODUCT_ICON;
+          block.append(products);
+        }
+        if (!CLOSED_STATES.includes(event.state) && sameDay(new Date(event.starts_at), new Date())) {
           const transfer = el("span", "cal-event-transfer");
           transfer.setAttribute("role", "link");
           transfer.title = "Transférer le patient (ex. salle de réveil)";
@@ -648,6 +946,12 @@
       if (sameDay(day, new Date())) classes.push("is-today");
       const cell = el("div", classes.join(" "));
       cell.append(el("span", "day-number", String(day.getDate())));
+      for (const item of exceptionsOfDay(day)) {
+        const tag = el("div", "month-exception", exceptionLabel(item));
+        tag.style.setProperty("--exception-color", item.color || "#64748b");
+        tag.title = exceptionLabel(item);
+        cell.append(tag);
+      }
       const dayEvents = eventsOfDay(day);
       for (const event of dayEvents.slice(0, MAX_MONTH_EVENTS)) {
         const chip = el(
@@ -664,6 +968,12 @@
           });
         }
         chip.title = eventTitle(event);
+        if (event.planned_products > 0) {
+          const products = el("span", "month-event-products");
+          products.title = productsTitle(event);
+          products.innerHTML = PRODUCT_ICON;
+          chip.append(products);
+        }
         chip.style.setProperty("--event-color", eventColor(event));
         chip.addEventListener("click", (clickEvent) => {
           clickEvent.stopPropagation();
@@ -753,28 +1063,43 @@
       start: start.toISOString(),
       end: end.toISOString(),
     });
-    const room = document.querySelector("#roomFilter").value;
-    const doctor = document.querySelector("#doctorFilter").value;
+    const room = singlePick(document.querySelector("#roomFilter"));
+    const doctor = singlePick(document.querySelector("#doctorFilter"));
+    const pickedRooms = roomPicks();
+    const pickedDoctors = doctorPicks();
     if (room) params.set("room_id", room);
     if (doctor) params.set("doctor_id", doctor);
     try {
       const availabilityParams = new URLSearchParams({ start: isoDay(start), end: isoDay(end) });
       if (room) availabilityParams.set("room_id", room);
       if (doctor) availabilityParams.set("doctor_id", doctor);
-      const [data, slots] = await Promise.all([
+      const [data, slots, exceptionRows] = await Promise.all([
         request(`/range-view?${params}`),
         request(`/availability?${availabilityParams}`),
+        request(`/schedule-exceptions?start=${isoDay(start)}&end=${isoDay(end)}`).catch(() => []),
       ]);
       if (token !== loadToken) return;
       const inGroup = groupRoomIds();
-      const withLane = (list) => list.map((event) => ({
-        ...event,
-        lane_room_id: event.current_location_id || event.room_id,
-        lane_room: event.current_location || event.room,
-      }));
-      events = withLane(inGroup ? data.filter((event) => inGroup.has(event.room_id)) : data);
+      const roomOk = (id) => !pickedRooms.length || pickedRooms.includes(id);
+      const doctorOk = (id) => !pickedDoctors.length || pickedDoctors.includes(id);
+      exceptions = exceptionRows.filter((item) =>
+        (!item.room_id || roomOk(item.room_id))
+        && (!item.resource_id || doctorOk(item.resource_id))
+        && (!inGroup || !item.room_id || inGroup.has(item.room_id)));
+      // Un patient transféré hors du groupe reste dans la colonne de sa salle d'origine : le groupe n'affiche que ses salles.
+      const withLane = (list) => list.map((event) => {
+        const moved = event.current_location_id && (!inGroup || inGroup.has(event.current_location_id));
+        return {
+          ...event,
+          lane_room_id: moved ? event.current_location_id : event.room_id,
+          lane_room: moved ? event.current_location : event.room,
+        };
+      });
+      events = withLane((inGroup ? data.filter((event) => inGroup.has(event.room_id)) : data)
+        .filter((event) => roomOk(event.room_id) && doctorOk(event.doctor_id)));
       availability = {
-        blocks: inGroup ? slots.blocks.filter((block) => inGroup.has(block.room_id)) : slots.blocks,
+        blocks: (inGroup ? slots.blocks.filter((block) => inGroup.has(block.room_id)) : slots.blocks)
+          .filter((block) => roomOk(block.room_id) && (!block.resource_id || doctorOk(block.resource_id))),
         restricted: new Set(slots.restricted_room_ids),
       };
       showMessage(events.length ? "" : "Aucun rendez-vous sur cette période.");
@@ -782,6 +1107,7 @@
       if (token !== loadToken) return;
       events = [];
       availability = { blocks: [], restricted: new Set() };
+      exceptions = [];
       showMessage(error.message, true);
     }
     render();
@@ -827,26 +1153,49 @@
     document.querySelector("#newAppointment").disabled = roomRows.length === 0;
   }
 
+  const isAdminUser = () => ["admin", "superadmin"].includes(window.AppAuth.user()?.role);
+
+  // Fermeture bloquante couvrant le créneau (salle et médecin connus) : seuls les administrateurs peuvent forcer.
+  function closureFor(start, end, roomId, doctorId) {
+    const day = isoDay(start);
+    const from = start.getHours() * 60 + start.getMinutes();
+    const to = isoDay(end) === day ? end.getHours() * 60 + end.getMinutes() : 24 * 60;
+    return exceptions.find((item) => item.blocks_booking
+      && item.start_date <= day && item.end_date >= day
+      && (!item.room_id || item.room_id === roomId)
+      && (!item.resource_id || item.resource_id === doctorId)
+      && from < (item.end_time ? toMinutes(item.end_time) : 24 * 60)
+      && to > (item.start_time ? toMinutes(item.start_time) : 0));
+  }
+
   function openCreate(start, durationMinutes = 30, roomId = "", extra = {}) {
     const base = start || new Date();
     if (!start) {
       base.setMinutes(Math.ceil(base.getMinutes() / 30) * 30, 0, 0);
+    }
+    // La colonne cliquée prime ; sinon le filtre Salle, sinon l'unique salle du groupe affiché.
+    const groupRooms = groupRoomIds();
+    const room = extra.laneRoom
+      || singlePick(document.querySelector("#roomFilter"))
+      || roomId
+      || (groupRooms && groupRooms.size === 1 ? [...groupRooms][0] : "");
+    if (!isAdminUser()) {
+      const closed = closureFor(base, new Date(base.getTime() + durationMinutes * 60_000), room, extra.doctorId || singlePick(document.querySelector("#doctorFilter")));
+      if (closed) {
+        showMessage(`Planning indisponible : ${exceptionLabel(closed)}. Aucun rendez-vous ne peut être ajouté.`, true);
+        return;
+      }
     }
     document.querySelector("#appointmentForm").reset();
     document.querySelector("#startsAt").value = toLocalInput(base);
     document.querySelector("#endsAt").value = toLocalInput(
       new Date(base.getTime() + durationMinutes * 60_000),
     );
-    // La colonne cliquée prime ; sinon le filtre Salle, sinon l'unique salle du groupe affiché.
-    const groupRooms = groupRoomIds();
-    const room = extra.laneRoom
-      || document.querySelector("#roomFilter").value
-      || roomId
-      || (groupRooms && groupRooms.size === 1 ? [...groupRooms][0] : "");
     if (room) document.querySelector("#appointmentRoom").value = room;
     if (extra.doctorId) document.querySelector("#doctor").value = extra.doctorId;
     if (extra.typeId) document.querySelector("#appointmentType").value = extra.typeId;
     document.querySelector("#appointmentError").textContent = "";
+    document.querySelector("#freeSlots").hidden = true;
     editingId = null;
     document.querySelector("#appointmentTitle").textContent = "Nouveau rendez-vous";
     document.querySelector("#appointmentSubmit").textContent = "Créer";
@@ -866,6 +1215,7 @@
     value("#endsAt", toLocalInput(new Date(event.ends_at)));
     value("#notes", event.notes);
     document.querySelector("#appointmentError").textContent = "";
+    document.querySelector("#freeSlots").hidden = true;
     document.querySelector("#appointmentTitle").textContent = `Modifier le rendez-vous de ${event.patient_name}`;
     document.querySelector("#appointmentSubmit").textContent = "Enregistrer";
     document.querySelector("#detailDialog").close();
@@ -946,6 +1296,51 @@
     await load();
   });
 
+  // Durée de la prestation : plage de la salle (et du médecin) à l'heure choisie, sinon type, sinon durée précédente.
+  let previousDuration = 0;
+  let durationToken = 0;
+  const pickValue = (selector) => document.querySelector(selector).value;
+  document.querySelector("#appointmentForm").addEventListener("focusin", () => {
+    const span = new Date(pickValue("#endsAt")) - new Date(pickValue("#startsAt"));
+    if (span > 0) previousDuration = span;
+  });
+
+  async function adaptDuration() {
+    const start = new Date(pickValue("#startsAt"));
+    if (Number.isNaN(start.getTime())) return;
+    const token = ++durationToken;
+    const room = pickValue("#appointmentRoom");
+    const doctor = pickValue("#doctor");
+    let minutes = 0;
+    try {
+      if (room) {
+        const day = isoDay(start);
+        const params = new URLSearchParams({ start: day, end: isoDay(addDays(start, 1)), room_id: room });
+        if (doctor) params.set("doctor_id", doctor);
+        const { blocks } = await request(`/availability?${params}`);
+        const clock = formatTime(start);
+        const matching = blocks.filter((block) => block.date === day && block.room_id === room
+          && block.start_time <= clock && clock < block.end_time
+          && (!block.resource_id || block.resource_id === doctor));
+        const best = matching.find((block) => block.resource_id && block.resource_id === doctor) || matching[0];
+        if (best) minutes = best.slot_minutes;
+      }
+      if (!minutes && pickValue("#appointmentType")) {
+        const types = await request("/appointment-types");
+        minutes = types.find((entry) => entry.id === pickValue("#appointmentType"))?.duration_minutes || 0;
+      }
+    } catch {
+      /* on retombe sur la durée précédente */
+    }
+    if (token !== durationToken) return;
+    const span = minutes ? minutes * 60_000 : previousDuration || 30 * 60_000;
+    document.querySelector("#endsAt").value = toLocalInput(new Date(start.getTime() + span));
+    previousDuration = span;
+  }
+  for (const selector of ["#startsAt", "#appointmentRoom", "#doctor"]) {
+    document.querySelector(selector).addEventListener("change", adaptDuration);
+  }
+
   document.querySelector("#appointmentType").addEventListener("change", async () => {
     // La durée proposée suit le type choisi.
     try {
@@ -987,8 +1382,51 @@
       showMessage(editingId ? "Rendez-vous modifié." : "Rendez-vous créé.");
     } catch (error) {
       document.querySelector("#appointmentError").textContent = error.message;
+      if (/occup|créneau|plage/i.test(error.message)) showFreeSlots();
     }
   });
+
+  // Salle occupée : propose les plages libres (même salle / médecin, durée voulue) sous le message.
+  async function showFreeSlots() {
+    const box = document.querySelector("#freeSlots");
+    box.replaceChildren();
+    box.hidden = true;
+    const start = new Date(pickValue("#startsAt"));
+    const end = new Date(pickValue("#endsAt"));
+    if (Number.isNaN(start.getTime()) || end <= start || !pickValue("#appointmentRoom")) return;
+    const minutes = Math.round((end - start) / 60_000);
+    const params = new URLSearchParams({
+      start: isoDay(start),
+      end: isoDay(addDays(start, 14)),
+      duration: minutes,
+      room_id: pickValue("#appointmentRoom"),
+      limit: 8,
+    });
+    if (pickValue("#doctor")) params.set("doctor_id", pickValue("#doctor"));
+    try {
+      const { suggestions } = await request(`/suggestions?${params}`);
+      const free = suggestions.filter((item) => new Date(item.starts_at) >= new Date());
+      box.hidden = false;
+      box.append(el("strong", "", free.length ? "Plages libres proposées :" : "Aucune plage libre dans les 15 prochains jours."));
+      for (const item of free) {
+        const from = new Date(item.starts_at);
+        const to = new Date(item.ends_at);
+        const label = `${from.toLocaleDateString("fr-BE", { weekday: "short", day: "numeric", month: "short" })} · ${formatTime(from)}–${formatTime(to)}${item.room ? ` · ${item.room}` : ""}`;
+        const choice = el("button", "ghost", label);
+        choice.type = "button";
+        choice.addEventListener("click", () => {
+          document.querySelector("#startsAt").value = toLocalInput(from);
+          document.querySelector("#endsAt").value = toLocalInput(to);
+          document.querySelector("#appointmentError").textContent = "";
+          box.hidden = true;
+          box.replaceChildren();
+        });
+        box.append(choice);
+      }
+    } catch {
+      /* la liste est facultative */
+    }
+  }
 
   document.querySelector("#prev").addEventListener("click", () => shift(-1));
   document.querySelector("#next").addEventListener("click", () => shift(1));
@@ -1000,14 +1438,14 @@
     button.addEventListener("click", () => setView(button.dataset.view)),
   );
   document.querySelector("#roomFilter").addEventListener("change", () => {
-    if (document.querySelector("#roomFilter").value) {
+    if (roomPicks().length) {
       groupFilter().value = "";
       localStorage.removeItem("calendarGroup");
     }
     load();
   });
   groupFilter().addEventListener("change", () => {
-    if (groupFilter().value) document.querySelector("#roomFilter").value = "";
+    if (groupFilter().value) clearPicks(document.querySelector("#roomFilter"));
     localStorage.setItem("calendarGroup", groupFilter().value);
     load();
   });
@@ -1018,6 +1456,225 @@
   });
   document.querySelector("#doctorFilter").addEventListener("change", load);
   document.querySelector("#newAppointment").addEventListener("click", () => openCreate());
+  const deletedDialog = document.querySelector("#deletedAppointmentsDialog");
+  const deletedList = document.querySelector("#deletedAppointmentsList");
+  const deletedMessage = document.querySelector("#deletedAppointmentsMessage");
+  const deletedSearch = document.querySelector("#deletedAppointmentsSearch");
+  let deletedRows = [];
+  function renderDeletedRows() {
+    deletedList.replaceChildren();
+    const query = deletedSearch.value.trim().toLocaleLowerCase("fr");
+    const rows = deletedRows.filter((item) => [
+      item.patient_id,
+      item.patient_name,
+      item.appointment_type,
+      item.room,
+      item.doctor,
+      item.notes,
+      item.starts_at,
+      new Date(item.starts_at).toLocaleDateString("fr-BE"),
+    ].filter(Boolean).join(" ").toLocaleLowerCase("fr").includes(query));
+    if (!rows.length) {
+      deletedList.append(el("p", "deleted-empty",
+        deletedRows.length ? "Aucun rendez-vous ne correspond à cette recherche." : "Aucun rendez-vous supprimé à récupérer."));
+      return;
+    }
+    for (const item of rows) {
+      const card = el("article", "deleted-appointment");
+      const start = new Date(item.starts_at);
+      const end = new Date(item.ends_at);
+      const info = el("div", "deleted-appointment-info");
+      info.append(
+        el("strong", "", item.patient_name),
+        el("span", "", `${start.toLocaleDateString("fr-BE", { weekday: "long", day: "numeric", month: "long", year: "numeric" })} · ${formatTime(start)}–${formatTime(end)}`),
+        el("span", "", [item.appointment_type, item.room, item.doctor].filter(Boolean).join(" · ")),
+      );
+      const actions = el("div", "deleted-appointment-actions");
+      const restore = el("button", "", "Récupérer à la date initiale");
+      restore.type = "button";
+      const newDate = el("input");
+      newDate.type = "datetime-local";
+      newDate.value = toLocalInput(start);
+      newDate.setAttribute("aria-label", `Nouvelle date pour ${item.patient_name}`);
+      const reschedule = el("button", "secondary", "Rechercher une plage libre");
+      reschedule.type = "button";
+      const proposals = el("div", "deleted-slot-proposals");
+      const restoreAt = async (startsAt) => {
+        restore.disabled = true;
+        reschedule.disabled = true;
+        deletedMessage.textContent = "";
+        try {
+          const body = startsAt ? { starts_at: new Date(startsAt).toISOString() } : {};
+          await request(`/deleted-appointments/${item.id}/restore`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          });
+          await load();
+          deletedDialog.close();
+        } catch (error) {
+          deletedMessage.textContent = error.message;
+          restore.disabled = false;
+          reschedule.disabled = false;
+        }
+      };
+      restore.addEventListener("click", () => restoreAt(null));
+      reschedule.addEventListener("click", async () => {
+        const requestedStart = new Date(newDate.value);
+        if (!newDate.value || Number.isNaN(requestedStart.getTime())) {
+          deletedMessage.textContent = "Choisissez une date et une heure valides.";
+          return;
+        }
+        deletedMessage.textContent = "";
+        proposals.replaceChildren();
+        reschedule.disabled = true;
+        try {
+          const duration = Math.max(1, Math.round((end - start) / 60_000));
+          const searchEnd = addDays(new Date(requestedStart.getFullYear(), requestedStart.getMonth(), requestedStart.getDate()), 15);
+          const params = new URLSearchParams({
+            start: isoDay(requestedStart),
+            end: isoDay(searchEnd),
+            duration: String(duration),
+            room_id: item.room_id,
+            limit: "8",
+            preferred_time: formatTime(requestedStart),
+          });
+          if (item.doctor_id) params.set("doctor_id", item.doctor_id);
+          const result = await request(`/suggestions?${params}`);
+          const slots = result.suggestions.filter((slot) => new Date(slot.starts_at) >= requestedStart);
+          proposals.append(el("strong", "", slots.length
+            ? "Plages libres à partir de la date choisie :"
+            : "Aucune plage libre trouvée à partir de cette date."));
+          for (const slot of slots) {
+            const slotStart = new Date(slot.starts_at);
+            const slotEnd = new Date(slot.ends_at);
+            const label = `${slotStart.toLocaleDateString("fr-BE", { weekday: "short", day: "numeric", month: "short" })} · ${formatTime(slotStart)}–${formatTime(slotEnd)}`;
+            const choose = el("button", "ghost", label);
+            choose.type = "button";
+            choose.addEventListener("click", () => restoreAt(slot.starts_at));
+            proposals.append(choose);
+          }
+        } catch (error) {
+          deletedMessage.textContent = error.message;
+        } finally {
+          reschedule.disabled = false;
+        }
+      });
+      const search = el("button", "icon-button deleted-search");
+      search.type = "button";
+      search.title = "Rechercher un autre créneau (salle, médecin, période…)";
+      search.setAttribute("aria-label", search.title);
+      search.innerHTML = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>';
+      search.addEventListener("click", () => {
+        document.dispatchEvent(new CustomEvent("assistant:open-restore", {
+          detail: {
+            id: item.id,
+            typeId: item.appointment_type_id || "",
+            duration: Math.max(1, Math.round((end - start) / 60_000)),
+            roomId: item.room_id,
+            doctorId: item.doctor_id || "",
+          },
+        }));
+      });
+      actions.append(restore, newDate, reschedule, search);
+      card.append(info, actions, proposals);
+      deletedList.append(card);
+    }
+  }
+  async function renderDeletedAppointments() {
+    deletedMessage.textContent = "";
+    try {
+      deletedRows = await request("/deleted-appointments");
+      renderDeletedRows();
+    } catch (error) {
+      deletedList.replaceChildren();
+      deletedMessage.textContent = error.message;
+    }
+  }
+  deletedSearch.addEventListener("input", renderDeletedRows);
+  document.querySelector("#openDeletedAppointments").addEventListener("click", async () => {
+    deletedSearch.value = "";
+    await renderDeletedAppointments();
+    deletedDialog.showModal();
+  });
+  const patientDialog = document.querySelector("#patientSearchDialog");
+  const patientInput = document.querySelector("#patientSearchInput");
+  const patientMessage = document.querySelector("#patientSearchMessage");
+  const patientPast = document.querySelector("#patientSearchPast");
+  const patientList = document.querySelector("#patientSearchList");
+  let patientTimer = null;
+  let patientSeq = 0;
+  let patientRows = [];
+  function renderPatientRows() {
+    patientList.replaceChildren();
+    const now = new Date();
+    const showPast = patientPast.getAttribute("aria-pressed") === "true";
+    const future = patientRows.filter((item) => new Date(item.ends_at) >= now)
+      .sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
+    const past = showPast ? patientRows.filter((item) => new Date(item.ends_at) < now) : [];
+    const rows = [...future, ...past];
+    if (!rows.length) {
+      const hidden = patientRows.length - future.length;
+      patientList.append(el("p", "deleted-empty", patientRows.length
+        ? `Aucun rendez-vous à venir.${hidden ? ` Cochez « Afficher les rendez-vous précédents » (${hidden}).` : ""}`
+        : "Aucun rendez-vous trouvé pour ce patient."));
+      return;
+    }
+    for (const item of rows) {
+      const start = new Date(item.starts_at);
+      const end = new Date(item.ends_at);
+      const card = el("article", "deleted-appointment patient-appointment");
+      const info = el("div", "deleted-appointment-info");
+      info.append(
+        el("strong", "", `${item.patient_name} (n° ${item.patient_id})`),
+        el("span", "", `${start.toLocaleDateString("fr-BE", { weekday: "long", day: "numeric", month: "long", year: "numeric" })} · ${formatTime(start)}–${formatTime(end)}`),
+        el("span", "", [item.appointment_type, item.room, item.doctor, STATE_LABELS[item.state] || item.state].filter(Boolean).join(" · ")),
+      );
+      if (item.notes?.trim()) info.append(el("span", "patient-appointment-note", `💬 ${item.notes.trim()}`));
+      const go = el("button", "secondary", "Afficher dans l’agenda");
+      go.type = "button";
+      go.addEventListener("click", () => {
+        cursor = startOfDay(start);
+        patientDialog.close();
+        setView("day");
+      });
+      card.classList.add(end < now ? "is-past" : "is-future");
+      card.append(info, go);
+      patientList.append(card);
+    }
+  }
+  async function searchPatientAppointments() {
+    const term = patientInput.value.trim();
+    const seq = ++patientSeq;
+    patientMessage.textContent = "";
+    patientRows = [];
+    patientList.replaceChildren();
+    if (term.length < 2) return;
+    try {
+      const rows = await request(`/patient-appointments?query=${encodeURIComponent(term)}`);
+      if (seq !== patientSeq) return;
+      patientRows = rows;
+      renderPatientRows();
+    } catch (error) {
+      patientMessage.textContent = error.message;
+    }
+  }
+  patientPast.addEventListener("click", () => {
+    patientPast.setAttribute("aria-pressed", String(patientPast.getAttribute("aria-pressed") !== "true"));
+    renderPatientRows();
+  });
+  patientInput.addEventListener("input", () => {
+    clearTimeout(patientTimer);
+    patientTimer = setTimeout(searchPatientAppointments, 250);
+  });
+  document.querySelector("#openPatientSearch").addEventListener("click", () => {
+    patientInput.value = "";
+    patientPast.setAttribute("aria-pressed", "false");
+    patientRows = [];
+    patientMessage.textContent = "";
+    patientDialog.showModal();
+    patientInput.focus();
+  });
   document.addEventListener("blocks:changed", load);
   const agendaMenu = document.querySelector("#agendaMenu");
   agendaMenu.addEventListener("click", (event) => {
@@ -1026,8 +1683,29 @@
   document.addEventListener("click", (event) => {
     if (!agendaMenu.contains(event.target)) agendaMenu.open = false;
   });
-  document.addEventListener("assistant:pick", (event) => {
-    const { start, duration, roomId, doctorId, typeId } = event.detail;
+  document.addEventListener("assistant:pick", async (event) => {
+    const { start, duration, roomId, doctorId, typeId, restoreId } = event.detail;
+    if (restoreId) {
+      try {
+        await request(`/deleted-appointments/${restoreId}/restore`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            starts_at: new Date(start).toISOString(),
+            room_id: roomId,
+            doctor_id: doctorId || null,
+            appointment_type_id: typeId || null,
+            duration_minutes: duration,
+          }),
+        });
+        await load();
+        deletedDialog.close();
+      } catch (error) {
+        deletedMessage.textContent = error.message;
+        if (!deletedDialog.open) deletedDialog.showModal();
+      }
+      return;
+    }
     openCreate(new Date(start), duration, roomId, { doctorId, typeId });
     // La salle proposée prime sur le filtre du calendrier.
     document.querySelector("#appointmentRoom").value = roomId;

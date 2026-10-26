@@ -1,0 +1,1 @@
+ALTER TABLE rooms ADD COLUMN IF NOT EXISTS show_doctor boolean NOT NULL DEFAULT false;

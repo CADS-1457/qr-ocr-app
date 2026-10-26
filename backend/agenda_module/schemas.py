@@ -59,6 +59,14 @@ class StatusRequest(BaseModel):
     comment: str | None = Field(default=None, max_length=4000)
 
 
+class RestoreDeletedAppointment(BaseModel):
+    starts_at: datetime | None = None
+    room_id: UUID | None = None
+    doctor_id: UUID | None = None
+    appointment_type_id: UUID | None = None
+    duration_minutes: int | None = Field(default=None, gt=0, le=1440)
+
+
 class AppointmentCreate(BaseModel):
     patient_id: int = Field(gt=0)
     appointment_type_id: UUID | None = None
@@ -97,6 +105,7 @@ class RoomUpdate(BaseModel):
     color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
     capacity: int | None = Field(default=None, gt=0)
     max_parallel: int | None = Field(default=None, ge=1, le=20)
+    show_doctor: bool | None = None
     default_state: Literal[
         "PRESENT", "WAITING", "IN_PROGRESS", "RECOVERY", "BILLING", "COMPLETED", ""
     ] | None = None
@@ -202,4 +211,42 @@ class StockUnitCreate(BaseModel):
     def validate_tracked_fields(self) -> "StockUnitCreate":
         if self.serial_number is not None and self.quantity != 1:
             raise ValueError("Une unité avec numéro de série doit avoir une quantité de 1.")
+        return self
+
+
+class ExceptionTypePayload(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    color: str = Field(default="#64748b", pattern=r"^#[0-9a-fA-F]{6}$")
+    blocks_booking: bool = True
+
+
+class ExceptionPayload(BaseModel):
+    type_id: UUID
+    room_id: UUID | None = None
+    resource_id: UUID | None = None
+    start_date: date
+    end_date: date
+    start_time: time | None = None
+    end_time: time | None = None
+    note: str | None = Field(default=None, max_length=500)
+
+    @model_validator(mode="after")
+    def check_dates(self) -> "ExceptionPayload":
+        if self.start_time and self.end_time and self.end_time <= self.start_time:
+            raise ValueError("L'heure de fin doit être après l'heure de début.")
+        if self.end_date < self.start_date:
+            raise ValueError("La date de fin précède la date de début.")
+        if (self.end_date - self.start_date).days > 366:
+            raise ValueError("Une exception ne peut pas dépasser 367 jours.")
+        return self
+
+class PlannedStockAdd(BaseModel):
+    code: str | None = Field(default=None, max_length=255)
+    stock_unit_id: UUID | None = None
+    quantity: Decimal = Field(default=Decimal("1"), gt=0, le=1000)
+
+    @model_validator(mode="after")
+    def check_target(self) -> "PlannedStockAdd":
+        if not (self.code and self.code.strip()) and self.stock_unit_id is None:
+            raise ValueError("Indiquez le code scanné ou l'unité de stock.")
         return self

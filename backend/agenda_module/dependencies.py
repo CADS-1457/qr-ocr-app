@@ -41,3 +41,9 @@ def require_admin(
     if user.id is None:
         raise HTTPException(status_code=401, detail="Compte utilisateur invalide.")
     return user.id
+
+
+def is_admin_user(
+    authorization: str | None = Header(default=None),
+) -> bool:
+    return _agenda_user(authorization).role in ("admin", "superadmin")

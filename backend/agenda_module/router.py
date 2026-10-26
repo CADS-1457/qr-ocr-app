@@ -1,4 +1,4 @@
-﻿import json
+import json
 from datetime import date, datetime, time, timedelta
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -8,7 +8,7 @@ from sqlalchemy import inspect, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from .dependencies import get_current_user_id, get_db, require_admin
+from .dependencies import get_current_user_id, get_db, is_admin_user, require_admin
 from .schemas import (
     AppointmentCreate,
     AppointmentTypeCreate,
@@ -17,6 +17,10 @@ from .schemas import (
     ResourceUpdate,
     AppointmentTypeUpdate,
     AgendaGroupPayload,
+    ExceptionPayload,
+    ExceptionTypePayload,
+    PlannedStockAdd,
+    RestoreDeletedAppointment,
     RoomCreate,
     RoomUpdate,    SchedulingBlockCreate,
     SchedulingBlockUpdate,
@@ -27,7 +31,7 @@ from .schemas import (
     StatusRequest,
     TransferRequest,
 )
-from .service import transfer
+from .service import CLOSED_STOCK_STATES, apply_state_to_planned_stock, release_planned_stock, transfer
 
 router = APIRouter(prefix="/api/agenda", tags=["agenda"])
 
@@ -112,8 +116,30 @@ def ensure_room_capacity(db: Session, room_id: UUID, patient_id: int,
 
 
 def ensure_slot_allowed(db: Session, room_id: UUID, doctor_id: UUID | None,
-                        starts_at: datetime, ends_at: datetime) -> None:
-    """Refuse un rendez-vous hors des plages définies, si la salle en possède."""
+                        starts_at: datetime, ends_at: datetime, allow_closed: bool = False) -> None:
+    """Refuse un rendez-vous hors des plages définies, si la salle en possède.
+
+    Une fermeture exceptionnelle bloque tout le monde, sauf un administrateur (allow_closed)."""
+    closed = None if allow_closed else db.execute(
+        text(
+            "SELECT t.name,e.note FROM schedule_exceptions e "
+            "JOIN schedule_exception_types t ON t.id=e.type_id "
+            "WHERE t.blocks_booking AND (e.room_id IS NULL OR e.room_id=:room) "
+            "AND (e.resource_id IS NULL OR e.resource_id=CAST(:doctor AS uuid)) "
+            "AND (CAST(:s AS timestamptz) AT TIME ZONE :tz)::date BETWEEN e.start_date AND e.end_date "
+            "AND (CAST(:s AS timestamptz) AT TIME ZONE :tz)::time < COALESCE(e.end_time, TIME '23:59:59.999999') "
+            "AND ((CAST(:e AS timestamptz) AT TIME ZONE :tz)::date > (CAST(:s AS timestamptz) AT TIME ZONE :tz)::date "
+            "OR (CAST(:e AS timestamptz) AT TIME ZONE :tz)::time > COALESCE(e.start_time, TIME '00:00')) "
+            "LIMIT 1"
+        ),
+        {"s": starts_at, "e": ends_at, "tz": AGENDA_TIMEZONE, "room": room_id, "doctor": doctor_id},
+    ).mappings().first()
+    if closed:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Planning indisponible ce jour-là : {closed['name']}"
+            + (f" ({closed['note']})" if closed["note"] else "") + ".",
+        )
     row = db.execute(
         text(
             "WITH t AS (SELECT (CAST(:s AS timestamptz) AT TIME ZONE :tz) AS ls,"
@@ -213,6 +239,33 @@ def list_patients(
     ]
 
 
+@router.get("/patient-appointments")
+def patient_appointments(
+    query: str = Query(default="", max_length=255),
+    db: Session = Depends(get_db),
+    _: int = Depends(get_current_user_id),
+) -> list[dict[str, object]]:
+    term = query.strip()
+    if len(term) < 2:
+        return []
+    rows = db.execute(
+        text(
+            "SELECT a.id,a.patient_id,p.prenom||' '||p.nom AS patient_name,a.starts_at,a.ends_at,a.state,a.notes,"
+            "r.name AS room,t.name AS appointment_type,d.display_name AS doctor "
+            "FROM appointments a JOIN patient p ON p.id=a.patient_id "
+            "LEFT JOIN rooms r ON r.id=a.room_id "
+            "LEFT JOIN appointment_types t ON t.id=a.appointment_type_id "
+            "LEFT JOIN people_resources d ON d.id=a.doctor_id "
+            "WHERE lower(p.prenom||' '||p.nom) LIKE lower(:pattern) "
+            "OR lower(p.nom||' '||p.prenom) LIKE lower(:pattern) "
+            "OR CAST(p.id AS text)=:term OR CAST(p.date_naissance AS text) LIKE :pattern "
+            "ORDER BY a.starts_at DESC LIMIT 300"
+        ),
+        {"pattern": f"%{term}%", "term": term},
+    ).mappings()
+    return [dict(row) for row in rows]
+
+
 @router.get("/patients/{patient_id}/contact")
 def patient_contact(
     patient_id: int,
@@ -233,7 +286,7 @@ def list_rooms(
     return [
         dict(row)
         for row in db.execute(
-            text("SELECT id,name,kind,color,capacity,max_parallel,default_state,sort_order FROM rooms WHERE active=true ORDER BY sort_order,name")
+            text("SELECT id,name,kind,color,capacity,max_parallel,default_state,show_doctor,sort_order FROM rooms WHERE active=true ORDER BY sort_order,name")
         ).mappings()
     ]
 
@@ -557,6 +610,7 @@ def suggest_appointments(
     end: date = Query(...),
     duration: int = Query(default=0, ge=0, le=480, description="0 = durée de la plage"),
     room_id: UUID | None = Query(default=None),
+    group_id: UUID | None = Query(default=None),
     doctor_id: UUID | None = Query(default=None),
     weekdays: str | None = Query(default=None, description="Jours 0=lundi, séparés par des virgules"),
     time_from: str | None = Query(default=None),
@@ -584,9 +638,11 @@ def suggest_appointments(
     rooms = db.execute(
         text(
             "SELECT id,name,color,max_parallel FROM rooms WHERE active=true "
-            "AND (CAST(:room_id AS uuid) IS NULL OR id=CAST(:room_id AS uuid)) ORDER BY name"
+            "AND (CAST(:room_id AS uuid) IS NULL OR id=CAST(:room_id AS uuid)) "
+            "AND (CAST(:group_id AS uuid) IS NULL OR CAST(:room_id AS uuid) IS NOT NULL OR id IN "
+            "(SELECT room_id FROM agenda_group_rooms WHERE group_id=CAST(:group_id AS uuid))) ORDER BY name"
         ),
-        {"room_id": room_id},
+        {"room_id": room_id, "group_id": group_id},
     ).mappings().all()
     blocks = db.execute(
         text(
@@ -617,6 +673,24 @@ def suggest_appointments(
         row["id"]: row["display_name"]
         for row in db.execute(text("SELECT id,display_name FROM people_resources")).mappings()
     }
+    closures = db.execute(
+        text(
+            "SELECT e.room_id,e.resource_id,e.start_date,e.end_date,e.start_time,e.end_time FROM schedule_exceptions e "
+            "JOIN schedule_exception_types t ON t.id=e.type_id "
+            "WHERE t.blocks_booking AND e.start_date<=:e AND e.end_date>=:s"
+        ),
+        {"s": start, "e": end},
+    ).mappings().all()
+
+    def closed_on(day: date, room: UUID, doctor: UUID | None, begin: time, finish: time) -> bool:
+        return any(
+            c["start_date"] <= day <= c["end_date"]
+            and begin < (c["end_time"] or time.max)
+            and finish > (c["start_time"] or time.min)
+            and (c["room_id"] is None or c["room_id"] == room)
+            and (c["resource_id"] is None or c["resource_id"] == doctor)
+            for c in closures
+        )
 
     def occupied(room: UUID, doctor: UUID | None, s: datetime, e: datetime, limit: int) -> bool:
         room_items = [(i["starts_at"], i["ends_at"]) for i in busy if i["room_id"] == room]
@@ -656,6 +730,7 @@ def suggest_appointments(
                         doctor = doctor_id or block_doctor
                         if (
                             s > now
+                            and not closed_on(day, room["id"], doctor, cursor.time(), slot_end.time())
                             and cursor.time() >= window_start
                             and slot_end.time() <= window_end
                             and not occupied(room["id"], doctor, s, e, room["max_parallel"])
@@ -1166,11 +1241,19 @@ def range_view(
     rows = db.execute(
         text(
             "SELECT a.id,a.patient_id,p.nom,p.prenom,a.starts_at,a.ends_at,a.state,"
-            "a.notes,a.room_id,a.current_location_id,loc.name AS current_location,"
+            "a.notes,a.room_id,a.current_location_id,loc.name AS current_location,r.show_doctor,"
             "a.appointment_type_id,a.doctor_id,a.operator_id,a.phone,"
             "r.name AS room,r.color AS room_color,"
             "at.name AS appointment_type,at.color AS type_color,"
-            "d.display_name AS doctor,o.display_name AS operator "
+            "d.display_name AS doctor,o.display_name AS operator,"
+            "(SELECT count(*) FROM appointment_stock_usage asu WHERE asu.appointment_id=a.id "
+            "AND (asu.reserved_quantity>0 OR asu.used_quantity>0)) AS planned_products,"
+            "(SELECT string_agg(si.name||' x'||trim(trailing '.' FROM trim(trailing '0' FROM "
+            "(asu.reserved_quantity+asu.used_quantity)::text))||CASE WHEN su.serial_number IS NOT NULL "
+            "THEN ' ('||su.serial_number||')' ELSE '' END, E'\\n' ORDER BY si.name) "
+            "FROM appointment_stock_usage asu JOIN stock_units su ON su.id=asu.stock_unit_id "
+            "JOIN stock_items si ON si.id=su.stock_item_id WHERE asu.appointment_id=a.id "
+            "AND (asu.reserved_quantity>0 OR asu.used_quantity>0)) AS planned_products_label "
             "FROM appointments a JOIN patient p ON p.id=a.patient_id "
             "JOIN rooms r ON r.id=a.room_id "
             "LEFT JOIN rooms loc ON loc.id=a.current_location_id "
@@ -1199,10 +1282,11 @@ def create_appointment(
     payload: AppointmentCreate,
     db: Session = Depends(get_db),
     uid: int = Depends(get_current_user_id),
+    admin: bool = Depends(is_admin_user),
 ) -> dict[str, str]:
     if get_patient_contact(db, payload.patient_id) is None:
         raise HTTPException(status_code=404, detail="Patient introuvable.")
-    ensure_slot_allowed(db, payload.room_id, payload.doctor_id, payload.starts_at, payload.ends_at)
+    ensure_slot_allowed(db, payload.room_id, payload.doctor_id, payload.starts_at, payload.ends_at, admin)
     ensure_room_capacity(db, payload.room_id, payload.patient_id, payload.starts_at, payload.ends_at)
     try:
         appointment_id = db.execute(
@@ -1367,6 +1451,7 @@ def update_appointment(
     payload: AppointmentCreate,
     db: Session = Depends(get_db),
     uid: int = Depends(get_current_user_id),
+    admin: bool = Depends(is_admin_user),
 ) -> dict[str, bool]:
     """Modifie ou déplace un rendez-vous (date, heure, salle, médecin, notes…)."""
     current = db.execute(
@@ -1385,7 +1470,7 @@ def update_appointment(
         or current["room_id"] != payload.room_id
     )
     if moved:
-        ensure_slot_allowed(db, payload.room_id, payload.doctor_id, payload.starts_at, payload.ends_at)
+        ensure_slot_allowed(db, payload.room_id, payload.doctor_id, payload.starts_at, payload.ends_at, admin)
     if moved or current["patient_id"] != payload.patient_id:
         ensure_room_capacity(
             db, payload.room_id, payload.patient_id, payload.starts_at, payload.ends_at, appointment_id
@@ -1431,6 +1516,7 @@ def delete_appointment(
             detail="Seul un rendez-vous encore « Planifié » peut être supprimé ; utilisez « Annuler » sinon.",
         )
     try:
+        release_planned_stock(db, appointment_id)
         db.execute(text("DELETE FROM appointments WHERE id=:id"), {"id": appointment_id})
         _audit(db, appointment_id, "DELETE", uid, before, None)
         db.commit()
@@ -1439,6 +1525,112 @@ def delete_appointment(
         raise HTTPException(
             status_code=409,
             detail="Ce rendez-vous est lié à d'autres données (suivi, stock) : annulez-le plutôt.",
+        ) from error
+
+
+@router.get("/deleted-appointments")
+def list_deleted_appointments(
+    db: Session = Depends(get_db),
+    _: int = Depends(get_current_user_id),
+) -> list[dict[str, object]]:
+    rows = db.execute(
+        text(
+            "SELECT deleted.id,deleted.changed_at,deleted.before_data->>'patient_id' AS patient_id,"
+            "p.prenom||' '||p.nom AS patient_name,deleted.before_data->>'starts_at' AS starts_at,"
+            "deleted.before_data->>'ends_at' AS ends_at,deleted.before_data->>'room_id' AS room_id,"
+            "r.name AS room,deleted.before_data->>'appointment_type_id' AS appointment_type_id,"
+            "at.name AS appointment_type,deleted.before_data->>'doctor_id' AS doctor_id,"
+            "d.display_name AS doctor,deleted.before_data->>'operator_id' AS operator_id,"
+            "deleted.before_data->>'notes' AS notes,deleted.before_data->>'phone' AS phone "
+            "FROM (SELECT DISTINCT ON (a.appointment_id) a.appointment_id AS id,a.action,a.changed_at,"
+            "a.before_data FROM appointment_audit a ORDER BY a.appointment_id,a.changed_at DESC,a.id DESC) deleted "
+            "JOIN patient p ON p.id=(deleted.before_data->>'patient_id')::integer "
+            "JOIN rooms r ON r.id=(deleted.before_data->>'room_id')::uuid "
+            "LEFT JOIN appointment_types at ON at.id=NULLIF(deleted.before_data->>'appointment_type_id','')::uuid "
+            "LEFT JOIN people_resources d ON d.id=NULLIF(deleted.before_data->>'doctor_id','')::uuid "
+            "WHERE deleted.action='DELETE' AND NOT EXISTS "
+            "(SELECT 1 FROM appointments current WHERE current.id=deleted.id) "
+            "ORDER BY deleted.changed_at DESC LIMIT 500"
+        )
+    ).mappings()
+    return [dict(row) for row in rows]
+
+
+@router.post("/deleted-appointments/{appointment_id}/restore", status_code=201)
+def restore_deleted_appointment(
+    appointment_id: UUID,
+    payload: RestoreDeletedAppointment,
+    db: Session = Depends(get_db),
+    uid: int = Depends(get_current_user_id),
+    admin: bool = Depends(is_admin_user),
+) -> dict[str, str]:
+    deleted = db.execute(
+        text(
+            "SELECT a.before_data FROM appointment_audit a WHERE a.appointment_id=:id AND a.action='DELETE' "
+            "AND NOT EXISTS (SELECT 1 FROM appointments current WHERE current.id=:id) "
+            "ORDER BY a.changed_at DESC,a.id DESC LIMIT 1"
+        ),
+        {"id": appointment_id},
+    ).scalar_one_or_none()
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Rendez-vous supprimé introuvable ou déjà récupéré.")
+    if not deleted.get("patient_id") or not deleted.get("room_id"):
+        raise HTTPException(status_code=409, detail="Les données nécessaires à la récupération sont incomplètes.")
+    original_start = datetime.fromisoformat(deleted["starts_at"])
+    original_end = datetime.fromisoformat(deleted["ends_at"])
+    start = payload.starts_at or original_start
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=ZoneInfo(AGENDA_TIMEZONE))
+    duration = timedelta(minutes=payload.duration_minutes) if payload.duration_minutes else original_end - original_start
+    end = start + duration
+    room_id = payload.room_id or UUID(deleted["room_id"])
+    if "doctor_id" in payload.model_fields_set:
+        doctor_id = payload.doctor_id
+    else:
+        doctor_id = UUID(deleted["doctor_id"]) if deleted.get("doctor_id") else None
+    appointment_type_id = payload.appointment_type_id or deleted.get("appointment_type_id")
+    patient_id = int(deleted["patient_id"])
+    if get_patient_contact(db, patient_id) is None:
+        raise HTTPException(status_code=409, detail="Le patient associé n'existe plus.")
+    ensure_slot_allowed(db, room_id, doctor_id, start, end, admin)
+    ensure_room_capacity(db, room_id, patient_id, start, end)
+    try:
+        db.execute(
+            text(
+                "INSERT INTO appointments(id,patient_id,appointment_type_id,room_id,doctor_id,operator_id,"
+                "starts_at,ends_at,phone,notes,current_location_id,created_by) "
+                "VALUES(:id,:patient_id,:appointment_type_id,:room_id,:doctor_id,:operator_id,"
+                ":starts_at,:ends_at,:phone,:notes,:room_id,:created_by)"
+            ),
+            {
+                "id": appointment_id,
+                "patient_id": patient_id,
+                "appointment_type_id": appointment_type_id,
+                "room_id": room_id,
+                "doctor_id": doctor_id,
+                "operator_id": deleted.get("operator_id"),
+                "starts_at": start,
+                "ends_at": end,
+                "phone": deleted.get("phone"),
+                "notes": deleted.get("notes"),
+                "created_by": uid,
+            },
+        )
+        db.execute(
+            text(
+                "INSERT INTO appointment_status_history(appointment_id,new_state,changed_by,comment) "
+                "VALUES(:id,'PLANNED',:uid,'Rendez-vous récupéré depuis la corbeille')"
+            ),
+            {"id": appointment_id, "uid": uid},
+        )
+        _audit(db, appointment_id, "CREATE", uid, None, _snapshot(db, appointment_id))
+        db.commit()
+        return {"id": str(appointment_id)}
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Impossible de récupérer ce rendez-vous : la salle est occupée ou une référence n'est plus valide.",
         ) from error
 
 
@@ -1487,6 +1679,7 @@ def set_status(
             ),
             {"state": payload.new_state, "id": appointment_id},
         )
+        apply_state_to_planned_stock(db, appointment_id, payload.new_state, uid)
         db.commit()
         return {"ok": True}
     except Exception:
@@ -1510,3 +1703,307 @@ def followups(
             {"state": state},
         ).mappings()
     ]
+
+
+# ---- Exceptions de planning (fermeture, congé, malade, ...) ----
+EXCEPTION_SELECT = (
+    "SELECT e.id,e.type_id,t.name AS type,t.color,t.blocks_booking,e.room_id,r.name AS room,"
+    "e.resource_id,p.display_name AS resource,e.start_date,e.end_date,to_char(e.start_time,'HH24:MI') AS start_time,"
+    "to_char(e.end_time,'HH24:MI') AS end_time,e.note "
+    "FROM schedule_exceptions e JOIN schedule_exception_types t ON t.id=e.type_id "
+    "LEFT JOIN rooms r ON r.id=e.room_id LEFT JOIN people_resources p ON p.id=e.resource_id "
+)
+
+
+def _count_affected(db: Session, payload: ExceptionPayload) -> int:
+    return db.execute(
+        text(
+            "SELECT count(*) FROM appointments WHERE state NOT IN ('CANCELLED','NO_SHOW','POSTPONED') "
+            "AND (starts_at AT TIME ZONE :tz)::date BETWEEN :s AND :e "
+            "AND (CAST(:room AS uuid) IS NULL OR room_id=CAST(:room AS uuid)) "
+            "AND (CAST(:res AS uuid) IS NULL OR doctor_id=CAST(:res AS uuid)) "
+            "AND (starts_at AT TIME ZONE :tz)::time < COALESCE(CAST(:te AS time), TIME '23:59:59.999999') "
+            "AND ((ends_at AT TIME ZONE :tz)::date > (starts_at AT TIME ZONE :tz)::date "
+            "OR (ends_at AT TIME ZONE :tz)::time > COALESCE(CAST(:ts AS time), TIME '00:00'))"
+        ),
+        {"tz": AGENDA_TIMEZONE, "s": payload.start_date, "e": payload.end_date,
+         "room": payload.room_id, "res": payload.resource_id,
+         "ts": payload.start_time, "te": payload.end_time},
+    ).scalar_one()
+
+
+@router.get("/exception-types")
+def list_exception_types(
+    db: Session = Depends(get_db), _: int = Depends(get_current_user_id),
+) -> list[dict[str, object]]:
+    return [
+        dict(row) for row in db.execute(
+            text("SELECT id,name,color,blocks_booking FROM schedule_exception_types ORDER BY name")
+        ).mappings()
+    ]
+
+
+@router.post("/exception-types", status_code=201, dependencies=[Depends(require_admin)])
+def create_exception_type(payload: ExceptionTypePayload, db: Session = Depends(get_db)) -> dict[str, object]:
+    try:
+        row = db.execute(
+            text(
+                "INSERT INTO schedule_exception_types(name,color,blocks_booking) "
+                "VALUES(:name,:color,:blocks) RETURNING id,name,color,blocks_booking"
+            ),
+            {"name": payload.name.strip(), "color": payload.color, "blocks": payload.blocks_booking},
+        ).mappings().one()
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Ce libellé existe déjà.") from error
+    return dict(row)
+
+
+@router.put("/exception-types/{type_id}", dependencies=[Depends(require_admin)])
+def update_exception_type(
+    type_id: UUID, payload: ExceptionTypePayload, db: Session = Depends(get_db),
+) -> dict[str, object]:
+    try:
+        row = db.execute(
+            text(
+                "UPDATE schedule_exception_types SET name=:name,color=:color,blocks_booking=:blocks "
+                "WHERE id=:id RETURNING id,name,color,blocks_booking"
+            ),
+            {"id": type_id, "name": payload.name.strip(), "color": payload.color,
+             "blocks": payload.blocks_booking},
+        ).mappings().first()
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Ce libellé existe déjà.") from error
+    if not row:
+        raise HTTPException(status_code=404, detail="Libellé introuvable.")
+    return dict(row)
+
+
+@router.delete("/exception-types/{type_id}", status_code=204, dependencies=[Depends(require_admin)])
+def delete_exception_type(type_id: UUID, db: Session = Depends(get_db)) -> None:
+    try:
+        deleted = db.execute(
+            text("DELETE FROM schedule_exception_types WHERE id=:id"), {"id": type_id}
+        ).rowcount
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=409, detail="Ce libellé est utilisé par des exceptions : supprimez-les d'abord."
+        ) from error
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Libellé introuvable.")
+
+
+@router.get("/schedule-exceptions")
+def list_schedule_exceptions(
+    start: date = Query(...),
+    end: date = Query(...),
+    db: Session = Depends(get_db),
+    _: int = Depends(get_current_user_id),
+) -> list[dict[str, object]]:
+    if end < start or (end - start).days > 400:
+        raise HTTPException(status_code=422, detail="Période invalide.")
+    return [
+        dict(row) for row in db.execute(
+            text(EXCEPTION_SELECT + "WHERE e.start_date<=:e AND e.end_date>=:s ORDER BY e.start_date,e.end_date,t.name"),
+            {"s": start, "e": end},
+        ).mappings()
+    ]
+
+
+@router.post("/schedule-exceptions", status_code=201)
+def create_schedule_exception(
+    payload: ExceptionPayload, db: Session = Depends(get_db), uid: int = Depends(require_admin),
+) -> dict[str, object]:
+    try:
+        new_id = db.execute(
+            text(
+                "INSERT INTO schedule_exceptions(type_id,room_id,resource_id,start_date,end_date,start_time,end_time,note,created_by) "
+                "VALUES(:type,:room,:res,:s,:e,:ts,:te,:note,:uid) RETURNING id"
+            ),
+            {"type": payload.type_id, "room": payload.room_id, "res": payload.resource_id,
+             "s": payload.start_date, "e": payload.end_date, "ts": payload.start_time,
+             "te": payload.end_time, "note": (payload.note or "").strip() or None, "uid": uid},
+        ).scalar_one()
+        affected = _count_affected(db, payload)
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(status_code=422, detail="Libellé, salle ou médecin invalide.") from error
+    row = db.execute(text(EXCEPTION_SELECT + "WHERE e.id=:id"), {"id": new_id}).mappings().one()
+    return {**dict(row), "affected_appointments": affected}
+
+
+@router.put("/schedule-exceptions/{exception_id}", dependencies=[Depends(require_admin)])
+def update_schedule_exception(
+    exception_id: UUID, payload: ExceptionPayload, db: Session = Depends(get_db),
+) -> dict[str, object]:
+    try:
+        updated = db.execute(
+            text(
+                "UPDATE schedule_exceptions SET type_id=:type,room_id=:room,resource_id=:res,"
+                "start_date=:s,end_date=:e,start_time=:ts,end_time=:te,note=:note WHERE id=:id"
+            ),
+            {"id": exception_id, "type": payload.type_id, "room": payload.room_id,
+             "res": payload.resource_id, "s": payload.start_date, "e": payload.end_date,
+             "ts": payload.start_time, "te": payload.end_time,
+             "note": (payload.note or "").strip() or None},
+        ).rowcount
+        affected = _count_affected(db, payload)
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(status_code=422, detail="Libellé, salle ou médecin invalide.") from error
+    if not updated:
+        raise HTTPException(status_code=404, detail="Exception introuvable.")
+    row = db.execute(text(EXCEPTION_SELECT + "WHERE e.id=:id"), {"id": exception_id}).mappings().one()
+    return {**dict(row), "affected_appointments": affected}
+
+
+@router.delete("/schedule-exceptions/{exception_id}", status_code=204, dependencies=[Depends(require_admin)])
+def delete_schedule_exception(exception_id: UUID, db: Session = Depends(get_db)) -> None:
+    deleted = db.execute(
+        text("DELETE FROM schedule_exceptions WHERE id=:id"), {"id": exception_id}
+    ).rowcount
+    db.commit()
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Exception introuvable.")
+
+# ---- Produits prévus pour une intervention (ajoutés via QR code, consommés à la fin) ----
+PLANNED_STOCK_SELECT = (
+    "SELECT u.stock_unit_id,si.name AS item_name,su.lot_number,su.serial_number,su.expires_on,"
+    "u.planned_quantity,u.reserved_quantity,u.used_quantity,u.returned_quantity "
+    "FROM appointment_stock_usage u JOIN stock_units su ON su.id=u.stock_unit_id "
+    "JOIN stock_items si ON si.id=su.stock_item_id WHERE u.appointment_id=:a ORDER BY si.name,su.serial_number"
+)
+
+
+def _planned_stock(db: Session, appointment_id: UUID) -> list[dict[str, object]]:
+    return [dict(row) for row in db.execute(text(PLANNED_STOCK_SELECT), {"a": appointment_id}).mappings()]
+
+
+def _resolve_stock_unit(db: Session, payload: PlannedStockAdd) -> UUID:
+    if payload.stock_unit_id:
+        return payload.stock_unit_id
+    code = (payload.code or "").strip()
+    by_serial = db.execute(
+        text(
+            "SELECT su.id FROM stock_units su JOIN stock_items si ON si.id=su.stock_item_id "
+            "WHERE si.active AND trim(su.serial_number)=:c ORDER BY (su.quantity-su.reserved_quantity)>0 DESC LIMIT 1"
+        ),
+        {"c": code},
+    ).scalar_one_or_none()
+    if by_serial:
+        return by_serial
+    by_item = db.execute(
+        text(
+            "SELECT su.id FROM stock_units su JOIN stock_items si ON si.id=su.stock_item_id "
+            "LEFT JOIN stockitem li ON li.id=si.legacy_stock_item_id "
+            "WHERE si.active AND (trim(si.sku)=:c OR trim(li.code_barres)=:c OR trim(li.numero_serie)=:c) "
+            "AND su.quantity>su.reserved_quantity "
+            "ORDER BY su.expires_on NULLS LAST,su.id LIMIT 1"
+        ),
+        {"c": code},
+    ).scalar_one_or_none()
+    if by_item:
+        return by_item
+    raise HTTPException(status_code=404, detail="Code inconnu : aucun produit du stock ne correspond.")
+
+
+@router.get("/appointments/{appointment_id}/planned-stock")
+def list_planned_stock(
+    appointment_id: UUID, db: Session = Depends(get_db), _: int = Depends(get_current_user_id),
+) -> list[dict[str, object]]:
+    return _planned_stock(db, appointment_id)
+
+
+@router.post("/appointments/{appointment_id}/planned-stock", status_code=201)
+def add_planned_stock(
+    appointment_id: UUID,
+    payload: PlannedStockAdd,
+    db: Session = Depends(get_db),
+    _: int = Depends(get_current_user_id),
+) -> list[dict[str, object]]:
+    try:
+        state = db.execute(
+            text("SELECT state FROM appointments WHERE id=:id FOR UPDATE"), {"id": appointment_id}
+        ).scalar_one_or_none()
+        if state is None:
+            raise HTTPException(status_code=404, detail="Rendez-vous introuvable.")
+        if state in CLOSED_STOCK_STATES:
+            raise HTTPException(status_code=409, detail="Ce rendez-vous est clôturé : ajout impossible.")
+        unit_id = _resolve_stock_unit(db, payload)
+        unit = db.execute(
+            text(
+                "SELECT su.quantity,su.reserved_quantity,si.name FROM stock_units su "
+                "JOIN stock_items si ON si.id=su.stock_item_id WHERE su.id=:id FOR UPDATE"
+            ),
+            {"id": unit_id},
+        ).mappings().first()
+        if not unit:
+            raise HTTPException(status_code=404, detail="Unité de stock introuvable.")
+        if unit["quantity"] - unit["reserved_quantity"] < payload.quantity:
+            raise HTTPException(
+                status_code=409, detail=f"Stock disponible insuffisant pour « {unit['name']} ».",
+            )
+        db.execute(
+            text("UPDATE stock_units SET reserved_quantity=reserved_quantity+:q WHERE id=:id"),
+            {"q": payload.quantity, "id": unit_id},
+        )
+        db.execute(
+            text(
+                "INSERT INTO appointment_stock_usage(appointment_id,stock_unit_id,planned_quantity,reserved_quantity) "
+                "VALUES(:a,:s,:q,:q) ON CONFLICT(appointment_id,stock_unit_id) DO UPDATE SET "
+                "planned_quantity=appointment_stock_usage.planned_quantity+excluded.planned_quantity,"
+                "reserved_quantity=appointment_stock_usage.reserved_quantity+excluded.reserved_quantity"
+            ),
+            {"a": appointment_id, "s": unit_id, "q": payload.quantity},
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return _planned_stock(db, appointment_id)
+
+
+@router.delete("/appointments/{appointment_id}/planned-stock/{stock_unit_id}")
+def remove_planned_stock(
+    appointment_id: UUID,
+    stock_unit_id: UUID,
+    db: Session = Depends(get_db),
+    _: int = Depends(get_current_user_id),
+) -> list[dict[str, object]]:
+    try:
+        line = db.execute(
+            text(
+                "SELECT id,reserved_quantity,planned_quantity,used_quantity,returned_quantity "
+                "FROM appointment_stock_usage WHERE appointment_id=:a AND stock_unit_id=:s FOR UPDATE"
+            ),
+            {"a": appointment_id, "s": stock_unit_id},
+        ).mappings().first()
+        if not line or line["reserved_quantity"] <= 0:
+            raise HTTPException(status_code=404, detail="Aucun produit prévu à retirer.")
+        db.execute(
+            text("UPDATE stock_units SET reserved_quantity=GREATEST(reserved_quantity-:q,0) WHERE id=:id"),
+            {"q": line["reserved_quantity"], "id": stock_unit_id},
+        )
+        remaining = line["planned_quantity"] - line["reserved_quantity"]
+        if remaining <= 0 and line["used_quantity"] == 0 and line["returned_quantity"] == 0:
+            db.execute(text("DELETE FROM appointment_stock_usage WHERE id=:id"), {"id": line["id"]})
+        else:
+            db.execute(
+                text(
+                    "UPDATE appointment_stock_usage SET reserved_quantity=0,"
+                    "planned_quantity=GREATEST(planned_quantity-:q,0) WHERE id=:id"
+                ),
+                {"q": line["reserved_quantity"], "id": line["id"]},
+            )
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return _planned_stock(db, appointment_id)

@@ -18,13 +18,19 @@ def transfer(
     try:
         appointment = db.execute(
             text(
-                "SELECT id,patient_id,state,current_location_id "
+                "SELECT id,patient_id,state,current_location_id,"
+                "(starts_at AT TIME ZONE 'Europe/Brussels')::date = "
+                "(now() AT TIME ZONE 'Europe/Brussels')::date AS is_today "
                 "FROM appointments WHERE id=:id FOR UPDATE"
             ),
             {"id": appointment_id},
         ).mappings().first()
         if not appointment:
             raise HTTPException(status_code=404, detail="Rendez-vous introuvable.")
+        if not appointment["is_today"]:
+            raise HTTPException(
+                status_code=422, detail="Le transfert n'est possible que pour un rendez-vous du jour."
+            )
 
         room = db.execute(
             text("SELECT id FROM rooms WHERE id=:id AND active=true"),
@@ -180,6 +186,7 @@ def transfer(
                     "c": comment,
                 },
             )
+        apply_state_to_planned_stock(db, appointment_id, payload.new_state, user_id)
         db.commit()
         return {
             "ok": True,
@@ -191,3 +198,74 @@ def transfer(
     except Exception:
         db.rollback()
         raise
+
+
+CLOSED_STOCK_STATES = ("COMPLETED", "CANCELLED", "NO_SHOW", "POSTPONED")
+RELEASING_STATES = ("CANCELLED", "NO_SHOW", "POSTPONED")
+
+
+def release_planned_stock(db: Session, appointment_id: UUID) -> int:
+    """Libère les produits réservés (prévus) pour un rendez-vous, sans toucher au stock réel."""
+    lines = db.execute(
+        text(
+            "SELECT id,stock_unit_id,reserved_quantity FROM appointment_stock_usage "
+            "WHERE appointment_id=:a AND reserved_quantity>0 FOR UPDATE"
+        ),
+        {"a": appointment_id},
+    ).mappings().all()
+    for line in lines:
+        db.execute(
+            text("UPDATE stock_units SET reserved_quantity=GREATEST(reserved_quantity-:q,0) WHERE id=:id"),
+            {"q": line["reserved_quantity"], "id": line["stock_unit_id"]},
+        )
+        db.execute(
+            text("UPDATE appointment_stock_usage SET reserved_quantity=0 WHERE id=:id"),
+            {"id": line["id"]},
+        )
+    return len(lines)
+
+
+def settle_planned_stock(db: Session, appointment_id: UUID, user_id: int) -> int:
+    """Intervention terminée : les produits prévus sont consommés (sortie de stock + mouvement)."""
+    patient_id = db.execute(
+        text("SELECT patient_id FROM appointments WHERE id=:a"), {"a": appointment_id}
+    ).scalar_one()
+    lines = db.execute(
+        text(
+            "SELECT id,stock_unit_id,reserved_quantity FROM appointment_stock_usage "
+            "WHERE appointment_id=:a AND reserved_quantity>0 ORDER BY id FOR UPDATE"
+        ),
+        {"a": appointment_id},
+    ).mappings().all()
+    for line in lines:
+        quantity = line["reserved_quantity"]
+        db.execute(
+            text(
+                "UPDATE stock_units SET quantity=quantity-:q,"
+                "reserved_quantity=GREATEST(reserved_quantity-:q,0) WHERE id=:id"
+            ),
+            {"q": quantity, "id": line["stock_unit_id"]},
+        )
+        db.execute(
+            text(
+                "UPDATE appointment_stock_usage SET used_quantity=used_quantity+:q,"
+                "reserved_quantity=0 WHERE id=:id"
+            ),
+            {"q": quantity, "id": line["id"]},
+        )
+        db.execute(
+            text(
+                "INSERT INTO stock_movements"
+                "(stock_unit_id,appointment_id,patient_id,kind,quantity,created_by,comment) "
+                "VALUES(:s,:a,:p,'OUT',:q,:u,'Produit prévu, consommé à la fin de l''intervention')"
+            ),
+            {"s": line["stock_unit_id"], "a": appointment_id, "p": patient_id, "q": quantity, "u": user_id},
+        )
+    return len(lines)
+
+
+def apply_state_to_planned_stock(db: Session, appointment_id: UUID, new_state: str, user_id: int) -> None:
+    if new_state == "COMPLETED":
+        settle_planned_stock(db, appointment_id, user_id)
+    elif new_state in RELEASING_STATES:
+        release_planned_stock(db, appointment_id)
