@@ -132,14 +132,14 @@
       <fieldset>
         <legend>Ajouter un type de rendez-vous</legend>
         <label>Nom<input id="typeName" maxlength="255" required></label>
-        <label>Durée (minutes)<input id="typeDuration" type="number" min="1" max="1440" value="30" required></label>
+        <label>Durée (minutes, 0 = durée par défaut de la plage)<input id="typeDuration" type="number" min="0" max="1440" value="30" required></label>
         <button type="button" id="addType">Ajouter le type</button>
       </fieldset>
       <fieldset>
         <legend>Modifier un type de rendez-vous</legend>
         <label>Type<select id="editType"></select></label>
         <label>Nom<input id="editTypeName" maxlength="255"></label>
-        <label>Durée (minutes)<input id="editTypeDuration" type="number" min="1" max="1440" value="30"></label>
+        <label>Durée (minutes, 0 = durée par défaut de la plage)<input id="editTypeDuration" type="number" min="0" max="1440" value="30"></label>
         <label>Couleur<input id="editTypeColor" type="color" value="#2563eb"></label>
         <button type="button" id="saveType">Enregistrer le type</button>
       </fieldset>

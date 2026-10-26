@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="agenda/agenda.css">
   <link rel="stylesheet" href="agenda/calendrier.css">
   <script src="auth.js" defer></script>
+  <script src="eid.js" defer></script>
   <script src="app-navigation.js" defer></script>
   <script src="agenda/calendrier.js" defer></script>
   <script src="agenda/blocs.js" defer></script>
@@ -58,6 +59,7 @@
           <button id="manageBlocks" type="button" role="menuitem">Plages de rendez-vous</button>
           <button id="manageGroups" type="button" role="menuitem">Groupes d’agendas</button>
           <button id="manageExceptions" type="button" role="menuitem">Exceptions du planning</button>
+          <button id="manageTemporary" type="button" role="menuitem">Patients temporaires</button>
           <a id="openConfiguration" role="menuitem" href="agenda.html?config=1">Configuration de l’agenda</a>
         </div>
       </details>
@@ -104,6 +106,12 @@
       <button id="detailDelete" type="button" class="danger" title="Supprimer le rendez-vous" aria-label="Supprimer le rendez-vous">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/><path d="M10 11v6m4-6v6"/></svg>
       </button>
+      <button id="detailOverbook" type="button" class="secondary" hidden title="Ajouter un patient sur cette plage" aria-label="Ajouter un patient sur cette plage">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 21a6.5 6.5 0 0 1 13 0"/><path d="M17 4.5a3.5 3.5 0 0 1 0 7"/><path d="M19 15a6.5 6.5 0 0 1 3 6"/><path d="M19 6v0"/></svg>
+      </button>
+      <button id="detailReconcile" type="button" class="secondary" hidden title="Réconcilier le patient temporaire" aria-label="Réconcilier le patient temporaire">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="4"/><path d="M1.5 21a7.5 7.5 0 0 1 15 0"/><path d="m16 12 2.5 2.5L23 10"/></svg>
+      </button>
       <a id="detailOpen" class="button-link" href="agenda.html" title="Ouvrir dans le parcours patient" aria-label="Ouvrir dans le parcours patient">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="7" r="3.5"/><path d="M2.5 20v-1.5A5.5 5.5 0 0 1 8 13h2a5.5 5.5 0 0 1 5.5 5.5V20"/><path d="M17 8h4m-2-2 2 2-2 2"/><path d="M18 14v6"/></svg>
       </a>
@@ -141,6 +149,103 @@
     <div id="deletedAppointmentsList" class="deleted-appointments-list"></div>
   </dialog>
 
+  <dialog id="temporaryDialog" class="deleted-appointments-dialog">
+    <h2>Patients temporaires</h2>
+    <p class="hint">Patients créés dans l'agenda sans dossier existant. À l'accueil, complétez le dossier ou liez-le à un patient déjà enregistré.</p>
+    <div id="temporaryList" class="deleted-appointments-list"></div>
+  </dialog>
+
+  <dialog id="reconcileDialog">
+    <form id="reconcileForm">
+      <h2 id="reconcileTitle">Réconcilier le patient</h2>
+      <fieldset class="reconcile-mode">
+        <label><input type="radio" name="reconcileMode" value="convert" checked> Compléter le dossier (nouveau patient)</label>
+        <label><input type="radio" name="reconcileMode" value="merge"> Lier à un dossier existant</label>
+      </fieldset>
+      <div id="reconcileConvert">
+        <label>Nom<input id="rcNom" maxlength="255"></label>
+        <label>Prénom<input id="rcPrenom" maxlength="255"></label>
+        <label>Date de naissance<input id="rcDob" type="date"></label>
+        <label>Mobile<input id="rcMobile" type="tel" maxlength="50"></label>
+        <label>E-mail<input id="rcEmail" type="email" maxlength="255"></label>
+        <label>Langue
+          <select id="rcLanguage">
+            <option value="">Non précisée</option>
+            <option value="fr">Français</option>
+            <option value="nl">Néerlandais</option>
+            <option value="de">Allemand</option>
+            <option value="en">Anglais</option>
+          </select>
+        </label>
+      </div>
+      <div id="reconcileMerge" hidden>
+        <label>Rechercher le dossier<input id="rcSearch" type="search" placeholder="Nom ou prénom" autocomplete="off"></label>
+        <label>Dossier patient<select id="rcTarget" size="5"></select></label>
+      </div>
+      <p id="rcError" class="form-error" role="alert"></p>
+      <div class="actions">
+        <button type="button" id="rcCancel" class="secondary">Annuler</button>
+        <button type="submit">Réconcilier</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="newPatientDialog">
+    <form id="newPatientForm">
+      <h2>Nouveau patient</h2>
+      <div class="eid-row">
+        <button type="button" id="npReadEid" class="secondary" title="Lire la carte d'identité belge avec le lecteur eID">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="2"/><circle cx="8.5" cy="11" r="2"/><path d="M5.5 16c.5-1.5 1.700-2 3-2s2.500.5 3 2M14 10h5M14 13h4"/></svg>
+          Lire la carte eID
+        </button>
+        <span id="npEidStatus" class="hint" role="status"></span>
+      </div>
+      <label>Nom<input id="npNom" required maxlength="255" autocomplete="off"></label>
+      <label>Prénom<input id="npPrenom" required maxlength="255" autocomplete="off"></label>
+      <label class="check-row"><input id="npTemporary" type="checkbox"> Patient temporaire (pas encore connu dans la base : à réconcilier à l'accueil)</label>
+      <label>Date de naissance<input id="npDob" type="date" required></label>
+      <details class="np-identity">
+        <summary>Identité complète (carte d'identité)</summary>
+        <div class="np-photo-row">
+          <figure class="np-photo"><img id="npPhoto" alt="Photo de la carte" hidden><span id="npPhotoEmpty">Pas de photo</span></figure>
+          <label>Numéro national<input id="npNational" inputmode="numeric" maxlength="15" autocomplete="off" placeholder="00.00.00-000.00"></label>
+        </div>
+        <label>Prénoms<input id="npPrenoms" maxlength="255"></label>
+        <label>Lieu de naissance<input id="npLieu" maxlength="255"></label>
+        <label>Sexe
+          <select id="npSexe"><option value="">Non renseigné</option><option value="M">Masculin</option><option value="F">Féminin</option><option value="X">Autre</option></select>
+        </label>
+        <label>Nationalité<input id="npNationalite" maxlength="100"></label>
+        <label>Adresse (rue et numéro)<input id="npAdresse" maxlength="255"></label>
+        <label>Code postal<input id="npCodePostal" maxlength="20"></label>
+        <label>Commune<input id="npCommune" maxlength="255"></label>
+      </details>
+      <label>Mobile<input id="npMobile" type="tel" maxlength="50" placeholder="+32 ..."></label>
+      <label>E-mail<input id="npEmail" type="email" maxlength="255"></label>
+      <label>Langue
+        <select id="npLanguage">
+          <option value="">Non précisée</option>
+          <option value="fr">Français</option>
+          <option value="nl">Néerlandais</option>
+          <option value="de">Allemand</option>
+          <option value="en">Anglais</option>
+        </select>
+      </label>
+      <p id="npError" class="form-error" role="alert"></p>
+      <div id="npMatch" class="np-match" role="alert" hidden>
+        <p id="npMatchText"></p>
+        <div class="actions">
+          <button type="button" id="npMatchUpdate">Mettre à jour la fiche existante</button>
+          <button type="button" id="npMatchCreate" class="secondary">Créer un nouveau patient</button>
+        </div>
+      </div>
+      <div class="actions">
+        <button type="button" id="npCancel" class="secondary">Annuler</button>
+        <button type="submit">Créer le patient</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="confirmDialog" class="confirm-dialog">
     <h2 id="confirmTitle">Confirmation</h2>
     <p id="confirmText"></p>
@@ -153,11 +258,26 @@
   <dialog id="appointmentDialog">
     <form id="appointmentForm">
       <h2 id="appointmentTitle">Nouveau rendez-vous</h2>
-      <label>Patient<select id="patient" required></select></label>
+      <label class="patient-filter">Filtrer les patients
+        <input id="patientFilter" type="search" autocomplete="off" role="combobox" aria-expanded="false" aria-controls="patientResults" placeholder="Ex. : dupont, 12/03/1980, namur, 0470… ou « temporaire »">
+        <div id="patientResults" class="patient-results" role="listbox" hidden></div>
+      </label>
+      <label>Patient
+        <span class="patient-pick">
+          <select id="patient" required></select>
+          <button type="button" id="newPatientBtn" class="secondary icon-only" title="Créer un nouveau patient" aria-label="Créer un nouveau patient">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="4"/><path d="M1.5 21a7.5 7.5 0 0 1 15 0"/><path d="M19 8v6M16 11h6"/></svg>
+          </button>
+        </span>
+      </label>
       <label>Type<select id="appointmentType"></select></label>
       <label>Salle<select id="appointmentRoom" required></select></label>
       <label>Médecin<select id="doctor"></select></label>
       <label>Opérateur<select id="operator"></select></label>
+      <div class="appt-options" title="Ces choix priment sur le réglage de la salle">
+        <label><input id="showDoctor" type="checkbox"> Nom du médecin</label>
+        <label><input id="showStatus" type="checkbox"> Statut (pastille)</label>
+      </div>
       <label>Début<input id="startsAt" type="datetime-local" required></label>
       <label>Fin<input id="endsAt" type="datetime-local" required></label>
       <label>Notes<textarea id="notes" maxlength="4000"></textarea></label>
@@ -378,6 +498,23 @@
         <div class="actions"><button type="button" id="doctorShowSave">Enregistrer</button></div>
       </fieldset>
       <fieldset>
+        <legend>Afficher le statut (salle)</legend>
+        <p class="hint">Affiche une pastille de couleur du statut sur les rendez-vous de cette salle.</p>
+        <div class="block-line">
+          <label>Salle<select id="statusShowRoom"></select></label>
+          <label class="check-line"><input id="statusShowToggle" type="checkbox"> Afficher le statut</label>
+        </div>
+        <p id="statusShowMessage" class="form-error" role="alert"></p>
+        <div class="actions"><button type="button" id="statusShowSave">Enregistrer</button></div>
+      </fieldset>
+      <fieldset>
+        <legend>Statuts et couleurs</legend>
+        <p class="hint">Nom et couleur de chaque statut, valables pour tous les utilisateurs. « Bord » colore le côté gauche du rendez-vous (ex. Urgence). Ajoutez un statut dans la dernière ligne ; un statut désactivé n'est plus proposé.</p>
+        <div id="statusColorGrid" class="status-color-grid"></div>
+        <p id="statusColorMessage" class="form-error" role="alert"></p>
+        <div class="actions"><button type="button" id="statusColorSave">Enregistrer les statuts</button></div>
+      </fieldset>
+      <fieldset>
         <legend>Statut par défaut d'une salle (transfert)</legend>
         <p class="hint">Statut proposé automatiquement lorsqu'un patient est transféré vers cette salle (ex. « Réveil » pour la salle de réveil).</p>
         <div class="block-line">
@@ -385,6 +522,7 @@
           <label>Statut par défaut
             <select id="stateDefault">
               <option value="">Aucun (statut actuel)</option>
+              <option value="URGENT">Urgence</option>
               <option value="PRESENT">Présent</option>
               <option value="WAITING">En attente</option>
               <option value="IN_PROGRESS">En cours</option>

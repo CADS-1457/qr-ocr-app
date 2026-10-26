@@ -279,7 +279,7 @@
   $("#exAllDay").addEventListener("change", () => setAllDay($("#exAllDay").checked));
   $("#exceptionCancelEdit").addEventListener("click", resetForm);
 
-  async function openDialog(day) {
+  async function openDialog(day, roomId) {
     try {
       const [rooms, resources] = await Promise.all([request("/rooms"), request("/resources")]);
       fillRoomList(rooms);
@@ -290,6 +290,7 @@
         $("#exStart").value = day;
         $("#exEnd").value = day;
       }
+      if (roomId) setRoomPicks([String(roomId)]);
       await loadTypes();
       await loadList();
       dialog.showModal();
@@ -301,5 +302,5 @@
   }
 
   $("#manageExceptions").addEventListener("click", () => openDialog(null));
-  document.addEventListener("exceptions:open", (event) => openDialog(event.detail?.day));
+  document.addEventListener("exceptions:open", (event) => openDialog(event.detail?.day, event.detail?.roomId));
 })();

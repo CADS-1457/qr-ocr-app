@@ -19,6 +19,8 @@
     .form-section{margin:22px 0 4px;color:var(--primary);font-size:17px}.form-hint{margin:0 0 12px;font-size:14px}
     .consent-row{display:flex;flex-wrap:wrap;gap:12px 24px;margin-top:14px}.checkbox{display:flex;align-items:center;gap:8px;font-weight:700;cursor:pointer}.checkbox input{width:auto;min-height:auto}
     .form-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+    .eid-identity{display:flex;gap:18px;align-items:flex-start;margin:6px 0 12px}.eid-identity .field{flex:1;max-width:320px}.patient-photo{margin:0;width:96px;height:120px;border:1px solid #dbe3ec;border-radius:12px;background:#f4f7fb;display:flex;align-items:center;justify-content:center;overflow:hidden;font-size:12px;text-align:center;flex:none}.patient-photo img{width:100%;height:100%;object-fit:cover}
+    .section-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}.section-head .btn{gap:8px;min-height:38px}
     .status{display:none;margin-top:14px;padding:12px;border-radius:10px;line-height:1.4}.status.info{display:block;background:#dbeafe;color:#1e40af}.status.success{display:block;background:#dcfce7;color:#166534}.status.error{display:block;background:#fee2e2;color:#991b1b}
     .table-wrap{overflow:auto;border:1px solid var(--border);border-radius:12px}table{width:100%;min-width:620px;border-collapse:collapse}th,td{padding:11px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:top}th{background:var(--primary);color:#fff;white-space:nowrap}
     tbody tr{cursor:pointer}tbody tr:hover{background:#f1f5f9}tbody tr[aria-selected="true"]{background:#dbeafe}
@@ -76,6 +78,37 @@
         <div class="field"><label for="lastName">Nom</label><input id="lastName" type="text" maxlength="255" autocomplete="family-name" required></div>
         <div class="field"><label for="birthDate">Date de naissance</label><input id="birthDate" type="date" required></div>
       </div>
+      <div class="section-head">
+        <h3 class="form-section">Identité (carte d’identité)</h3>
+        <button id="readEid" class="btn light" type="button" title="Lire la carte d’identité belge avec le lecteur eID">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="2"/><circle cx="8.5" cy="11" r="2"/><path d="M5.5 16c.5-1.5 1.7-2 3-2s2.5.5 3 2M14 10h5M14 13h4"/></svg>
+          Lire la carte eID
+        </button>
+      </div>
+      <p id="eidStatus" class="muted form-hint">Les champs peuvent être remplis à la main ou depuis la carte (photo et numéro national compris).</p>
+      <div class="eid-identity">
+        <figure class="patient-photo" id="photoBox">
+          <img id="patientPhoto" alt="Photo du patient" hidden>
+          <span id="photoEmpty" class="muted">Pas de photo</span>
+        </figure>
+        <div class="field">
+          <label for="nationalNumber">Numéro national</label>
+          <input id="nationalNumber" type="text" inputmode="numeric" maxlength="15" autocomplete="off" placeholder="00.00.00-000.00">
+          <small class="muted">Utilisé pour le registre national, l’assurabilité et les échanges eHealth.</small>
+        </div>
+      </div>
+      <div class="form-grid">
+        <div class="field"><label for="givenNames">Prénoms</label><input id="givenNames" type="text" maxlength="255"></div>
+        <div class="field"><label for="birthPlace">Lieu de naissance</label><input id="birthPlace" type="text" maxlength="255"></div>
+        <div class="field">
+          <label for="sex">Sexe</label>
+          <select id="sex"><option value="">Non renseigné</option><option value="M">Masculin</option><option value="F">Féminin</option><option value="X">Autre</option></select>
+        </div>
+        <div class="field"><label for="nationality">Nationalité</label><input id="nationality" type="text" maxlength="100"></div>
+        <div class="field"><label for="street">Adresse (rue et numéro)</label><input id="street" type="text" maxlength="255" autocomplete="street-address"></div>
+        <div class="field"><label for="postalCode">Code postal</label><input id="postalCode" type="text" maxlength="20" autocomplete="postal-code"></div>
+        <div class="field"><label for="city">Commune</label><input id="city" type="text" maxlength="255" autocomplete="address-level2"></div>
+      </div>
       <h3 class="form-section">Coordonnées et communication</h3>
       <p class="muted form-hint">Ces informations servent aux rappels de rendez-vous de l’agenda. Les consentements sont désactivés par défaut.</p>
       <div class="form-grid">
@@ -106,6 +139,7 @@
   </section>
 </main>
 <script src="auth.js"></script>
+<script src="eid.js"></script>
 <script>
 'use strict';
 
@@ -231,11 +265,48 @@ function renderPatients() {
   }
 }
 
+let pendingPhoto = null;
+let photoUrl = null;
+const formatNationalNumber = (value) => {
+  const d = String(value || '').replace(/\D/g, '');
+  if (d.length !== 11) return d;
+  return `${d.slice(0, 2)}.${d.slice(2, 4)}.${d.slice(4, 6)}-${d.slice(6, 9)}.${d.slice(9)}`;
+};
+function showPhoto(src) {
+  $('patientPhoto').hidden = !src;
+  $('photoEmpty').hidden = Boolean(src);
+  if (src) $('patientPhoto').src = src;
+}
+async function loadPhoto(patientId) {
+  if (photoUrl) URL.revokeObjectURL(photoUrl);
+  photoUrl = null;
+  showPhoto(null);
+  try {
+    const response = await fetch(`${API}/patients/${patientId}/photo`, { headers: window.AppAuth.headers() });
+    if (!response.ok || selectedPatient?.id !== patientId) return;
+    photoUrl = URL.createObjectURL(await response.blob());
+    showPhoto(photoUrl);
+  } catch {
+    showPhoto(null);
+  }
+}
+
 function selectPatient(patient) {
   selectedPatient = patient;
+  pendingPhoto = null;
+  $('nationalNumber').value = formatNationalNumber(patient.numero_national);
+  loadPhoto(patient.id);
   $('firstName').value = patient.prenom;
   $('lastName').value = patient.nom;
   $('birthDate').value = patient.date_naissance;
+  $('givenNames').value = patient.prenoms || '';
+  $('birthPlace').value = patient.lieu_naissance || '';
+  $('sex').value = patient.sexe || '';
+  $('nationality').value = patient.nationalite || '';
+  $('street').value = patient.adresse || '';
+  $('postalCode').value = patient.code_postal || '';
+  $('city').value = patient.commune || '';
+  $('eidStatus').textContent = 'Les champs peuvent être remplis à la main ou depuis la carte (photo et numéro national compris).';
   $('mobile').value = patient.mobile || '';
   $('email').value = patient.email || '';
   $('language').value = patient.language || '';
@@ -300,6 +371,14 @@ async function savePatient(event) {
         prenom: $('firstName').value.trim(),
         nom: $('lastName').value.trim(),
         date_naissance: $('birthDate').value,
+        prenoms: $('givenNames').value.trim() || null,
+        lieu_naissance: $('birthPlace').value.trim() || null,
+        sexe: $('sex').value || null,
+        nationalite: $('nationality').value.trim() || null,
+        adresse: $('street').value.trim() || null,
+        code_postal: $('postalCode').value.trim() || null,
+        commune: $('city').value.trim() || null,
+        numero_national: $('nationalNumber').value.trim() || null,
         mobile: $('mobile').value.trim() || null,
         email: $('email').value.trim() || null,
         language: $('language').value || null,
@@ -318,6 +397,14 @@ async function savePatient(event) {
       throw new Error('Session expirée. Connectez-vous à nouveau.');
     }
     if (!response.ok) throw new Error(result.detail || `HTTP ${response.status}`);
+    if (pendingPhoto) {
+      const photoResponse = await fetch(`${API}/patients/${result.id}/photo`, {
+        method: 'PUT',
+        headers: window.AppAuth.headers({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ photo: pendingPhoto })
+      });
+      if (!photoResponse.ok) throw new Error('La photo n’a pas pu être enregistrée.');
+    }
     selectedPatient = result;
     patients = patients.map((patient) => patient.id === result.id ? result : patient);
     selectPatient(result);
@@ -359,6 +446,31 @@ $('logoutButton').addEventListener('click', () => logout());
 $('refreshButton').addEventListener('click', loadPatients);
 $('searchInput').addEventListener('input', renderPatients);
 $('patientForm').addEventListener('submit', savePatient);
+$('readEid').addEventListener('click', async () => {
+  $('eidStatus').textContent = 'Lecture de la carte…';
+  try {
+    const card = await window.EidReader.read();
+    const fill = (id, value) => { if (value) $(id).value = value; };
+    fill('lastName', card.nom);
+    fill('firstName', card.prenom);
+    fill('birthDate', card.date_naissance);
+    fill('givenNames', card.prenoms);
+    fill('birthPlace', card.lieu_naissance);
+    fill('sex', card.sexe);
+    fill('nationality', card.nationalite);
+    fill('street', card.adresse);
+    fill('postalCode', card.code_postal);
+    fill('city', card.commune);
+    if (card.numero_national) $('nationalNumber').value = formatNationalNumber(card.numero_national);
+    if (card.photo) {
+      pendingPhoto = card.photo;
+      showPhoto(`data:image/jpeg;base64,${card.photo}`);
+    }
+    $('eidStatus').textContent = 'Carte lue : vérifiez les informations puis enregistrez la fiche.';
+  } catch (error) {
+    $('eidStatus').textContent = error.message;
+  }
+});
 $('cancelButton').addEventListener('click', () => {
   selectedPatient = null;
   $('editCard').hidden = true;

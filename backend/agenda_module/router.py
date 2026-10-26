@@ -1,3 +1,5 @@
+import re
+import unicodedata
 import json
 from datetime import date, datetime, time, timedelta
 from uuid import UUID
@@ -14,11 +16,15 @@ from .schemas import (
     AppointmentTypeCreate,
     ResourceCreate,
     RoomOrder,
+    StatusCreate,
+    StatusUpdate,
     ResourceUpdate,
     AppointmentTypeUpdate,
     AgendaGroupPayload,
     ExceptionPayload,
     ExceptionTypePayload,
+    PatientCreate,
+    PatientReconcile,
     PlannedStockAdd,
     RestoreDeletedAppointment,
     RoomCreate,
@@ -215,28 +221,308 @@ def health(db: Session = Depends(get_db)) -> dict[str, str]:
     return {"status": "ok", "module": "agenda-stock"}
 
 
+IDENTITY_FIELDS = ("prenoms", "lieu_naissance", "nationalite", "adresse", "code_postal", "commune")
+
+
+def _identity_values(payload) -> dict[str, object]:
+    values: dict[str, object] = {
+        name: " ".join((getattr(payload, name) or "").split()) or None for name in IDENTITY_FIELDS
+    }
+    sexe = (payload.sexe or "").strip().upper() or None
+    if sexe not in (None, "M", "F", "X"):
+        raise HTTPException(status_code=422, detail="Le sexe doit être M, F ou X.")
+    values["sexe"] = sexe
+    from main import normalize_national_number
+
+    values["numero_national"] = normalize_national_number(getattr(payload, "numero_national", None))
+    return values
+
+
+def _store_photo(db: Session, patient_id: int, encoded: str | None) -> None:
+    from main import decode_photo
+
+    raw = decode_photo(encoded)
+    if raw:
+        db.execute(text("UPDATE patient SET photo=:photo WHERE id=:id"), {"photo": raw, "id": patient_id})
+
+
 @router.get("/patients")
 def list_patients(
     query: str = Query(default="", max_length=255),
+    include_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
     _: int = Depends(get_current_user_id),
 ) -> list[dict[str, object]]:
+    # Critères séparés par des virgules : tous doivent correspondre (ET) ;
+    # chacun peut viser le nom/prénom, la date de naissance, le mobile, la commune ou « temporaire ».
+    terms = [term.strip() for term in query.split(",") if term.strip()][:8]
+    clauses: list[str] = []
+    params: dict[str, object] = {"include_id": include_id}
+    for index, term in enumerate(terms):
+        escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        params[f"t{index}"] = f"%{escaped}%"
+        options = [
+            f"lower(prenom || ' ' || nom) LIKE lower(:t{index})",
+            f"lower(nom || ' ' || prenom) LIKE lower(:t{index})",
+            f"lower(coalesce(commune,'')) LIKE lower(:t{index})",
+        ]
+        found = re.fullmatch(r"(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})", term)
+        if found:
+            try:
+                params[f"d{index}"] = date(int(found[3]), int(found[2]), int(found[1]))
+                options.append(f"date_naissance=:d{index}")
+            except ValueError:
+                pass
+        elif re.fullmatch(r"\d{4}-\d{2}-\d{2}", term):
+            try:
+                params[f"d{index}"] = date.fromisoformat(term)
+                options.append(f"date_naissance=:d{index}")
+            except ValueError:
+                pass
+        digits = "".join(ch for ch in term if ch.isdigit()).lstrip("0")
+        if len(digits) >= 3 and re.fullmatch(r"[\d\s+./()-]+", term):
+            params[f"m{index}"] = f"%{digits}%"
+            options.append(f"regexp_replace(coalesce(mobile,''),'[^0-9]','','g') LIKE :m{index}")
+        if re.fullmatch(r"temp(oraires?)?", term, re.IGNORECASE):
+            options.append("is_temporary")
+        clauses.append("(" + " OR ".join(options) + ")")
+    condition = " AND ".join(clauses) if clauses else "TRUE"
     rows = db.execute(
         text(
-            "SELECT id,prenom,nom,date_naissance FROM patient "
-            "WHERE :query='' OR lower(prenom || ' ' || nom) LIKE lower(:pattern) "
-            "ORDER BY nom,prenom,id LIMIT 100"
+            "SELECT id,prenom,nom,date_naissance,is_temporary FROM patient "
+            f"WHERE id=:include_id OR ({condition}) ORDER BY nom,prenom,id LIMIT 100"
         ),
-        {"query": query.strip(), "pattern": f"%{query.strip()}%"},
+        params,
     ).mappings()
     return [
         {
             "id": row["id"],
             "display_name": f"{row['prenom']} {row['nom']}".strip(),
             "date_naissance": row["date_naissance"],
+            "is_temporary": row["is_temporary"],
         }
         for row in rows
     ]
+
+
+@router.get("/patients/match")
+def match_patient(
+    nom: str = Query(default="", max_length=255),
+    prenom: str = Query(default="", max_length=255),
+    date_naissance: date | None = Query(default=None),
+    numero_national: str = Query(default="", max_length=20),
+    db: Session = Depends(get_db),
+    _: int = Depends(get_current_user_id),
+) -> dict[str, object] | None:
+    from main import normalize_national_number
+
+    national = normalize_national_number(numero_national)
+    if not national and not (nom.strip() and prenom.strip() and date_naissance):
+        return None
+    row = db.execute(
+        text(
+            "SELECT id,nom,prenom,date_naissance,mobile,email,prenoms,lieu_naissance,sexe,nationalite,"
+            "adresse,code_postal,commune FROM patient WHERE NOT is_temporary AND ("
+            "(CAST(:nn AS text) IS NOT NULL AND numero_national=:nn) OR "
+            "(lower(nom)=lower(:nom) AND lower(prenom)=lower(:prenom) AND date_naissance=:dob)) "
+            "ORDER BY (numero_national=:nn) DESC NULLS LAST, id LIMIT 1"
+        ),
+        {"nom": nom.strip(), "prenom": prenom.strip(), "dob": date_naissance, "nn": national},
+    ).mappings().first()
+    if not row:
+        return None
+    return {**row, "display_name": f"{row['prenom']} {row['nom']}".strip()}
+
+
+@router.put("/patients/{patient_id}/identity")
+def update_patient_identity(
+    patient_id: int,
+    payload: PatientReconcile,
+    db: Session = Depends(get_db),
+    _: int = Depends(get_current_user_id),
+) -> dict[str, object]:
+    values = _identity_values(payload)
+    values = {key: value for key, value in values.items() if value is not None}
+    if not values and not payload.photo:
+        raise HTTPException(status_code=422, detail="Aucune information à mettre à jour.")
+    exists = db.execute(text("SELECT 1 FROM patient WHERE id=:id"), {"id": patient_id}).first()
+    if not exists:
+        raise HTTPException(status_code=404, detail="Patient introuvable.")
+    if values:
+        assignments = ",".join(f"{key}=:{key}" for key in values)
+        db.execute(text(f"UPDATE patient SET {assignments} WHERE id=:id"), {"id": patient_id, **values})
+    _store_photo(db, patient_id, payload.photo)
+    db.commit()
+    return {"id": patient_id, "updated": sorted(values) + (["photo"] if payload.photo else [])}
+
+
+@router.get("/patients/temporary")
+def list_temporary_patients(
+    db: Session = Depends(get_db),
+    _: int = Depends(get_current_user_id),
+) -> list[dict[str, object]]:
+    return [
+        dict(row)
+        for row in db.execute(
+            text(
+                "SELECT p.id,p.prenom,p.nom,p.mobile,p.email,p.created_at,"
+                "(SELECT count(*) FROM appointments a WHERE a.patient_id=p.id) AS appointments "
+                "FROM patient p WHERE p.is_temporary ORDER BY p.created_at"
+            )
+        ).mappings()
+    ]
+
+
+@router.post("/patients/{patient_id}/reconcile")
+def reconcile_patient(
+    patient_id: int,
+    payload: PatientReconcile,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+) -> dict[str, object]:
+    from main import PATIENT_EMAIL_PATTERN, PATIENT_LANGUAGES, PATIENT_MOBILE_PATTERN
+
+    temp = db.execute(
+        text("SELECT id,is_temporary FROM patient WHERE id=:id FOR UPDATE"), {"id": patient_id}
+    ).mappings().first()
+    if temp is None:
+        raise HTTPException(status_code=404, detail="Patient introuvable.")
+    if not temp["is_temporary"]:
+        raise HTTPException(status_code=409, detail="Ce patient n'est pas temporaire.")
+
+    if payload.target_id is not None:
+        if payload.target_id == patient_id:
+            raise HTTPException(status_code=422, detail="Choisissez un autre dossier patient.")
+        target = db.execute(
+            text("SELECT id FROM patient WHERE id=:id AND NOT is_temporary FOR UPDATE"),
+            {"id": payload.target_id},
+        ).first()
+        if target is None:
+            raise HTTPException(status_code=404, detail="Dossier patient cible introuvable.")
+        for table in (
+            "appointments", "follow_up_tasks", "notifications", "stock_movements", "patientdispensation",
+        ):
+            db.execute(
+                text(f"UPDATE {table} SET patient_id=:to WHERE patient_id=:frm"),
+                {"to": payload.target_id, "frm": patient_id},
+            )
+        db.execute(
+            text(
+                "UPDATE patient_communication_preferences SET patient_id=:to WHERE patient_id=:frm "
+                "AND NOT EXISTS (SELECT 1 FROM patient_communication_preferences WHERE patient_id=:to)"
+            ),
+            {"to": payload.target_id, "frm": patient_id},
+        )
+        db.execute(text("DELETE FROM patient WHERE id=:id"), {"id": patient_id})
+        db.commit()
+        return {"id": payload.target_id, "merged": True}
+
+    nom = (payload.nom or "").strip()
+    prenom = (payload.prenom or "").strip()
+    if not nom or not prenom or payload.date_naissance is None:
+        raise HTTPException(status_code=422, detail="Nom, prénom et date de naissance sont obligatoires.")
+    birth = payload.date_naissance
+    if birth > date.today():
+        raise HTTPException(status_code=422, detail="La date de naissance est dans le futur.")
+    mobile = (payload.mobile or "").strip() or None
+    email = (payload.email or "").strip() or None
+    language = (payload.language or "").strip() or None
+    if mobile and not PATIENT_MOBILE_PATTERN.match(mobile):
+        raise HTTPException(status_code=422, detail="Numéro de mobile invalide.")
+    if email and not PATIENT_EMAIL_PATTERN.match(email):
+        raise HTTPException(status_code=422, detail="Adresse e-mail invalide.")
+    if language and language not in PATIENT_LANGUAGES:
+        raise HTTPException(status_code=422, detail="Langue invalide.")
+    duplicate = db.execute(
+        text(
+            "SELECT id FROM patient WHERE NOT is_temporary AND id<>:id AND lower(nom)=lower(:nom) "
+            "AND lower(prenom)=lower(:prenom) AND date_naissance=:dob LIMIT 1"
+        ),
+        {"id": patient_id, "nom": nom, "prenom": prenom, "dob": birth},
+    ).first()
+    if duplicate:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Ce patient existe déjà dans la base (n° {duplicate[0]}) : fusionnez avec ce dossier.",
+        )
+    db.execute(
+        text(
+            "UPDATE patient SET nom=:nom,prenom=:prenom,date_naissance=:dob,mobile=:mobile,email=:email,"
+            "language=:language,is_temporary=false,prenoms=:prenoms,lieu_naissance=:lieu_naissance,"
+            "sexe=:sexe,nationalite=:nationalite,adresse=:adresse,code_postal=:code_postal,"
+            "commune=:commune,numero_national=COALESCE(:numero_national,numero_national) WHERE id=:id"
+        ),
+        {
+            "id": patient_id, "nom": nom, "prenom": prenom, "dob": birth,
+            "mobile": mobile, "email": email, "language": language, **_identity_values(payload),
+        },
+    )
+    _store_photo(db, patient_id, payload.photo)
+    db.commit()
+    return {"id": patient_id, "merged": False}
+
+
+@router.post("/patients", status_code=201)
+def create_patient(
+    payload: PatientCreate,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id),
+) -> dict[str, object]:
+    from main import PATIENT_EMAIL_PATTERN, PATIENT_LANGUAGES, PATIENT_MOBILE_PATTERN
+
+    nom = payload.nom.strip()
+    prenom = payload.prenom.strip()
+    if not nom or not prenom:
+        raise HTTPException(status_code=422, detail="Le nom et le prénom sont obligatoires.")
+    temporary = payload.temporary
+    # Un patient temporaire n'a pas de date de naissance connue : date technique, remplacée à la réconciliation.
+    birth = payload.date_naissance or (date(1900, 1, 1) if temporary else None)
+    if birth is None:
+        raise HTTPException(status_code=422, detail="La date de naissance est obligatoire.")
+    if birth > date.today():
+        raise HTTPException(status_code=422, detail="La date de naissance est dans le futur.")
+    mobile = (payload.mobile or "").strip() or None
+    email = (payload.email or "").strip() or None
+    language = (payload.language or "").strip() or None
+    if mobile and not PATIENT_MOBILE_PATTERN.match(mobile):
+        raise HTTPException(status_code=422, detail="Numéro de mobile invalide.")
+    if email and not PATIENT_EMAIL_PATTERN.match(email):
+        raise HTTPException(status_code=422, detail="Adresse e-mail invalide.")
+    if language and language not in PATIENT_LANGUAGES:
+        raise HTTPException(status_code=422, detail="Langue invalide.")
+    duplicate = None if temporary or payload.force else db.execute(
+        text(
+            "SELECT id FROM patient WHERE lower(nom)=lower(:nom) AND lower(prenom)=lower(:prenom) "
+            "AND date_naissance=:dob LIMIT 1"
+        ),
+        {"nom": nom, "prenom": prenom, "dob": birth},
+    ).first()
+    if duplicate:
+        raise HTTPException(status_code=409, detail=f"Ce patient existe déjà (n° {duplicate[0]}).")
+    username = db.execute(
+        text("SELECT username FROM useraccount WHERE id=:id"), {"id": user_id}
+    ).scalar() or str(user_id)
+    new_id = db.execute(
+        text(
+            "INSERT INTO patient (nom,prenom,date_naissance,mobile,email,language,sms_consent,email_consent,is_temporary,"
+            "prenoms,lieu_naissance,sexe,nationalite,adresse,code_postal,commune,numero_national,created_by,created_at) "
+            "VALUES (:nom,:prenom,:dob,:mobile,:email,:language,false,false,:temp,"
+            ":prenoms,:lieu_naissance,:sexe,:nationalite,:adresse,:code_postal,:commune,:numero_national,:by,now()) RETURNING id"
+        ),
+        {
+            "nom": nom, "prenom": prenom, "dob": birth, "mobile": mobile,
+            "email": email, "language": language, "by": username, "temp": temporary,
+            **_identity_values(payload),
+        },
+    ).scalar()
+    _store_photo(db, new_id, payload.photo)
+    db.commit()
+    return {
+        "id": new_id,
+        "display_name": f"{prenom} {nom}".strip(),
+        "date_naissance": birth,
+        "is_temporary": temporary,
+    }
 
 
 @router.get("/patient-appointments")
@@ -250,7 +536,7 @@ def patient_appointments(
         return []
     rows = db.execute(
         text(
-            "SELECT a.id,a.patient_id,p.prenom||' '||p.nom AS patient_name,a.starts_at,a.ends_at,a.state,a.notes,"
+            "SELECT a.id,a.patient_id,p.prenom||' '||p.nom AS patient_name,p.is_temporary AS patient_temporary,a.starts_at,a.ends_at,a.state,a.notes,"
             "r.name AS room,t.name AS appointment_type,d.display_name AS doctor "
             "FROM appointments a JOIN patient p ON p.id=a.patient_id "
             "LEFT JOIN rooms r ON r.id=a.room_id "
@@ -278,6 +564,97 @@ def patient_contact(
     return contact
 
 
+def _status_rows(db: Session) -> list[dict[str, object]]:
+    return [
+        dict(row)
+        for row in db.execute(
+            text(
+                "SELECT code,label,color,edge,builtin,active FROM appointment_statuses "
+                "ORDER BY sort_order,label"
+            )
+        ).mappings()
+    ]
+
+
+@router.get("/statuses")
+def list_statuses(
+    db: Session = Depends(get_db),
+    _: int = Depends(get_current_user_id),
+) -> list[dict[str, object]]:
+    return _status_rows(db)
+
+
+@router.get("/status-colors")
+def list_status_colors(
+    db: Session = Depends(get_db),
+    _: int = Depends(get_current_user_id),
+) -> dict[str, str]:
+    return {row["code"]: row["color"] for row in _status_rows(db)}
+
+
+@router.post("/statuses", status_code=201, dependencies=[Depends(require_admin)])
+def create_status(
+    payload: StatusCreate,
+    db: Session = Depends(get_db),
+) -> dict[str, str]:
+    label = payload.label.strip()
+    slug = re.sub(
+        r"[^A-Z0-9]+", "_",
+        unicodedata.normalize("NFKD", label).encode("ascii", "ignore").decode().upper(),
+    ).strip("_")[:30] or "STATUT"
+    code = f"C_{slug}"
+    existing = {row["code"] for row in _status_rows(db)}
+    if label.lower() in {str(row["label"]).lower() for row in _status_rows(db)}:
+        raise HTTPException(status_code=409, detail="Un statut porte déjà ce nom.")
+    suffix = 1
+    while code in existing:
+        suffix += 1
+        code = f"C_{slug}_{suffix}"
+    assert re.fullmatch(r"[A-Z0-9_]+", code)
+    # Une valeur d'enum doit être validée (commit) avant d'être utilisable : connexion autocommit dédiée.
+    with db.get_bind().connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+        connection.exec_driver_sql(f"ALTER TYPE appointment_state ADD VALUE IF NOT EXISTS '{code}'")
+    db.execute(
+        text(
+            "INSERT INTO appointment_statuses(code,label,color,edge,builtin,active,sort_order) "
+            "VALUES(:code,:label,:color,:edge,false,true,"
+            "(SELECT COALESCE(MAX(sort_order),0)+1 FROM appointment_statuses))"
+        ),
+        {"code": code, "label": label, "color": payload.color.upper(), "edge": payload.edge},
+    )
+    db.commit()
+    return {"code": code}
+
+
+@router.patch("/statuses/{code}", dependencies=[Depends(require_admin)])
+def update_status(
+    code: str,
+    payload: StatusUpdate,
+    db: Session = Depends(get_db),
+) -> dict[str, bool]:
+    fields = payload.model_dump(exclude_unset=True, exclude_none=True)
+    if not fields:
+        raise HTTPException(status_code=422, detail="Aucun paramètre à modifier.")
+    row = db.execute(
+        text("SELECT builtin FROM appointment_statuses WHERE code=:code"), {"code": code}
+    ).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Statut introuvable.")
+    if row[0] and fields.get("active") is False:
+        raise HTTPException(status_code=422, detail="Un statut de base ne peut pas être désactivé.")
+    if "label" in fields:
+        fields["label"] = fields["label"].strip()
+    if "color" in fields:
+        fields["color"] = fields["color"].upper()
+    assignments = ",".join(f"{name}=:{name}" for name in fields)
+    db.execute(
+        text(f"UPDATE appointment_statuses SET {assignments} WHERE code=:code"),
+        {**fields, "code": code},
+    )
+    db.commit()
+    return {"ok": True}
+
+
 @router.get("/rooms")
 def list_rooms(
     db: Session = Depends(get_db),
@@ -286,7 +663,7 @@ def list_rooms(
     return [
         dict(row)
         for row in db.execute(
-            text("SELECT id,name,kind,color,capacity,max_parallel,default_state,show_doctor,sort_order FROM rooms WHERE active=true ORDER BY sort_order,name")
+            text("SELECT id,name,kind,color,capacity,max_parallel,default_state,show_doctor,show_status,sort_order FROM rooms WHERE active=true ORDER BY sort_order,name")
         ).mappings()
     ]
 
@@ -1158,7 +1535,7 @@ def day_view(
 ) -> list[dict[str, object]]:
     rows = db.execute(
         text(
-            "SELECT a.id,a.patient_id,p.nom,p.prenom,a.starts_at,a.ends_at,a.state,"
+            "SELECT a.id,a.patient_id,p.nom,p.prenom,p.is_temporary AS patient_temporary,a.starts_at,a.ends_at,a.state,"
             "a.phone,a.notes,r.name AS room,loc.name AS current_location,"
             "loc.kind AS location_kind,at.name AS appointment_type,"
             "d.display_name AS doctor,o.display_name AS operator,"
@@ -1199,7 +1576,7 @@ def appointment_history(
 ) -> list[dict[str, object]]:
     rows = db.execute(
         text(
-            "SELECT a.id,a.patient_id,p.nom,p.prenom,a.starts_at,a.ends_at,a.state,"
+            "SELECT a.id,a.patient_id,p.nom,p.prenom,p.is_temporary AS patient_temporary,a.starts_at,a.ends_at,a.state,"
             "a.notes,r.name AS room,at.name AS appointment_type,"
             "d.display_name AS doctor,o.display_name AS operator "
             "FROM appointments a JOIN patient p ON p.id=a.patient_id "
@@ -1240,8 +1617,10 @@ def range_view(
         raise HTTPException(status_code=422, detail="Plage de dates invalide (62 jours maximum).")
     rows = db.execute(
         text(
-            "SELECT a.id,a.patient_id,p.nom,p.prenom,a.starts_at,a.ends_at,a.state,"
-            "a.notes,a.room_id,a.current_location_id,loc.name AS current_location,r.show_doctor,"
+            "SELECT a.id,a.patient_id,p.nom,p.prenom,p.is_temporary AS patient_temporary,a.starts_at,a.ends_at,a.state,"
+            "a.notes,a.room_id,a.current_location_id,loc.name AS current_location,"
+            "COALESCE(a.show_doctor,r.show_doctor) AS show_doctor,a.show_doctor AS own_show_doctor,"
+            "COALESCE(a.show_status,r.show_status) AS show_status,"
             "a.appointment_type_id,a.doctor_id,a.operator_id,a.phone,"
             "r.name AS room,r.color AS room_color,"
             "at.name AS appointment_type,at.color AS type_color,"
@@ -1293,9 +1672,9 @@ def create_appointment(
             text(
                 "INSERT INTO appointments"
                 "(patient_id,appointment_type_id,room_id,doctor_id,operator_id,"
-                "starts_at,ends_at,phone,notes,current_location_id,created_by) "
+                "starts_at,ends_at,phone,notes,show_doctor,show_status,current_location_id,created_by) "
                 "VALUES(:patient_id,:appointment_type_id,:room_id,:doctor_id,"
-                ":operator_id,:starts_at,:ends_at,:phone,:notes,:room_id,:created_by) "
+                ":operator_id,:starts_at,:ends_at,:phone,:notes,:show_doctor,:show_status,:room_id,:created_by) "
                 "RETURNING id"
             ),
             {**payload.model_dump(), "created_by": uid},
@@ -1484,7 +1863,12 @@ def update_appointment(
                 "current_location_id=CASE WHEN room_id IS DISTINCT FROM :room_id "
                 "THEN :room_id ELSE current_location_id END,doctor_id=:doctor_id,"
                 "operator_id=:operator_id,starts_at=:starts_at,"
-                "ends_at=:ends_at,phone=:phone,notes=:notes,updated_at=now(),version=version+1 "
+                "ends_at=:ends_at,phone=:phone,notes=:notes,"
+                "show_doctor=COALESCE(:show_doctor,show_doctor,CASE WHEN room_id IS DISTINCT FROM :room_id "
+                "THEN (SELECT r0.show_doctor FROM rooms r0 WHERE r0.id=appointments.room_id) END),"
+                "show_status=COALESCE(:show_status,show_status,CASE WHEN room_id IS DISTINCT FROM :room_id "
+                "THEN (SELECT r0.show_status FROM rooms r0 WHERE r0.id=appointments.room_id) END),"
+                "updated_at=now(),version=version+1 "
                 "WHERE id=:id"
             ),
             {**payload.model_dump(), "id": appointment_id},
@@ -1651,6 +2035,11 @@ def set_status(
     db: Session = Depends(get_db),
     uid: int = Depends(get_current_user_id),
 ) -> dict[str, bool]:
+    if not db.execute(
+        text("SELECT 1 FROM appointment_statuses WHERE code=:code AND active"),
+        {"code": payload.new_state},
+    ).first():
+        raise HTTPException(status_code=422, detail="Statut inconnu ou désactivé.")
     try:
         appointment = db.execute(
             text("SELECT state FROM appointments WHERE id=:id FOR UPDATE"),

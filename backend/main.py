@@ -13,7 +13,7 @@ from typing import Literal, Optional
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
-from sqlalchemy import Column, LargeBinary, delete, func, inspect, or_, update
+from sqlalchemy import Column, LargeBinary, delete, func, inspect, or_, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Field, Session, SQLModel, create_engine, select
 
@@ -318,6 +318,15 @@ class Patient(SQLModel, table=True):
     language: Optional[str] = Field(default=None, max_length=10)
     sms_consent: bool = Field(default=False)
     email_consent: bool = Field(default=False)
+    is_temporary: bool = Field(default=False)
+    prenoms: Optional[str] = Field(default=None, max_length=255)
+    lieu_naissance: Optional[str] = Field(default=None, max_length=255)
+    sexe: Optional[str] = Field(default=None, max_length=1)
+    nationalite: Optional[str] = Field(default=None, max_length=100)
+    adresse: Optional[str] = Field(default=None, max_length=255)
+    code_postal: Optional[str] = Field(default=None, max_length=20)
+    commune: Optional[str] = Field(default=None, max_length=255)
+    numero_national: Optional[str] = Field(default=None, max_length=11)
     created_by: str = Field(max_length=255)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc),
@@ -335,7 +344,45 @@ class PatientRead(SQLModel):
     language: Optional[str] = None
     sms_consent: bool = False
     email_consent: bool = False
+    is_temporary: bool = False
+    prenoms: Optional[str] = None
+    lieu_naissance: Optional[str] = None
+    sexe: Optional[str] = None
+    nationalite: Optional[str] = None
+    adresse: Optional[str] = None
+    code_postal: Optional[str] = None
+    commune: Optional[str] = None
+    numero_national: Optional[str] = None
     created_at: datetime
+
+
+def normalize_national_number(value: Optional[str]) -> Optional[str]:
+    """Numéro national belge : 11 chiffres, clé de contrôle modulo 97 (naissances avant et après 2000)."""
+    digits = re.sub(r"\D", "", value or "")
+    if not digits:
+        return None
+    if len(digits) != 11:
+        raise HTTPException(status_code=422, detail="Le numéro national doit comporter 11 chiffres.")
+    base, check = int(digits[:9]), int(digits[9:])
+    if not any(97 - (base + extra) % 97 == check for extra in (0, 2_000_000_000)):
+        raise HTTPException(status_code=422, detail="Numéro national invalide (clé de contrôle).")
+    return digits
+
+
+MAX_PHOTO_BYTES = 200_000
+
+
+def decode_photo(value: Optional[str]) -> Optional[bytes]:
+    """Photo JPEG de la carte (base64) ; vérifie la signature et la taille."""
+    if not value:
+        return None
+    try:
+        raw = base64.b64decode(value, validate=True)
+    except (ValueError, binascii.Error):
+        raise HTTPException(status_code=422, detail="Photo invalide.")
+    if len(raw) > MAX_PHOTO_BYTES or not raw.startswith(b"\xff\xd8"):
+        raise HTTPException(status_code=422, detail="La photo doit être une image JPEG de moins de 200 Ko.")
+    return raw
 
 
 PATIENT_LANGUAGES = {"fr", "nl", "de", "en"}
@@ -352,6 +399,18 @@ class PatientUpdate(SQLModel):
     language: Optional[str] = Field(default=None, max_length=10)
     sms_consent: Optional[bool] = None
     email_consent: Optional[bool] = None
+    prenoms: Optional[str] = Field(default=None, max_length=255)
+    lieu_naissance: Optional[str] = Field(default=None, max_length=255)
+    sexe: Optional[str] = Field(default=None, max_length=1)
+    nationalite: Optional[str] = Field(default=None, max_length=100)
+    adresse: Optional[str] = Field(default=None, max_length=255)
+    code_postal: Optional[str] = Field(default=None, max_length=20)
+    commune: Optional[str] = Field(default=None, max_length=255)
+    numero_national: Optional[str] = Field(default=None, max_length=20)
+
+
+class PatientPhotoPayload(SQLModel):
+    photo: str = Field(min_length=1, max_length=400_000)
 
 
 class StockScanResolveRequest(SQLModel):
@@ -460,11 +519,60 @@ def create_db_and_tables():
             ("language", "VARCHAR(10)"),
             ("sms_consent", "BOOLEAN NOT NULL DEFAULT FALSE"),
             ("email_consent", "BOOLEAN NOT NULL DEFAULT FALSE"),
+            ("is_temporary", "BOOLEAN NOT NULL DEFAULT FALSE"),
+            ("prenoms", "VARCHAR(255)"),
+            ("lieu_naissance", "VARCHAR(255)"),
+            ("sexe", "VARCHAR(1)"),
+            ("nationalite", "VARCHAR(100)"),
+            ("adresse", "VARCHAR(255)"),
+            ("code_postal", "VARCHAR(20)"),
+            ("commune", "VARCHAR(255)"),
+            ("numero_national", "VARCHAR(11)"),
+            ("photo", "BYTEA"),
         ):
             if column_name not in patient_columns:
                 connection.exec_driver_sql(
                     f"ALTER TABLE patient ADD COLUMN {column_name} {column_type}"
                 )
+        if engine.dialect.name == "postgresql" and inspect(engine).has_table("appointments"):
+            connection.exec_driver_sql(
+                "ALTER TABLE appointments ADD COLUMN IF NOT EXISTS show_doctor BOOLEAN"
+            )
+            connection.exec_driver_sql(
+                "ALTER TABLE appointments ADD COLUMN IF NOT EXISTS show_status BOOLEAN"
+            )
+            connection.exec_driver_sql(
+                "CREATE TABLE IF NOT EXISTS appointment_status_colors("
+                "state text PRIMARY KEY, color text NOT NULL)"
+            )
+        if engine.dialect.name == "postgresql" and inspect(engine).has_table("appointments"):
+            connection.exec_driver_sql("ALTER TYPE appointment_state ADD VALUE IF NOT EXISTS 'URGENT'")
+            connection.exec_driver_sql(
+                "CREATE TABLE IF NOT EXISTS appointment_statuses("
+                "code text PRIMARY KEY, label text NOT NULL, color text NOT NULL, "
+                "edge boolean NOT NULL DEFAULT false, builtin boolean NOT NULL DEFAULT false, "
+                "active boolean NOT NULL DEFAULT true, sort_order integer NOT NULL DEFAULT 0)"
+            )
+            connection.exec_driver_sql(
+                "INSERT INTO appointment_statuses(code,label,color,edge,builtin,sort_order) VALUES "
+                "('PLANNED','Planifié','#94A3B8',false,true,1),('URGENT','Urgence','#DC2626',true,true,2),('PRESENT','Présent','#16A34A',false,true,3),('WAITING','En attente','#F59E0B',false,true,4),('IN_PROGRESS','En cours','#2563EB',false,true,5),('RECOVERY','Réveil','#7C3AED',false,true,6),('BILLING','Facturation','#0891B2',false,true,7),('COMPLETED','Terminé','#475569',false,true,8),('CANCELLED','Annulé','#DC2626',false,true,9),('NO_SHOW','Absent','#B45309',false,true,10),('POSTPONED','Reporté','#9CA3AF',false,true,11),('DISCHARGED','Sorti','#475569',false,true,12) "
+                "ON CONFLICT (code) DO NOTHING"
+            )
+        if engine.dialect.name == "postgresql" and inspect(engine).has_table("rooms"):
+            connection.exec_driver_sql(
+                "ALTER TABLE rooms ADD COLUMN IF NOT EXISTS show_status boolean NOT NULL DEFAULT false"
+            )
+        if engine.dialect.name == "postgresql" and inspect(engine).has_table("appointment_types"):
+            connection.exec_driver_sql(
+                "ALTER TABLE appointment_types "
+                "DROP CONSTRAINT IF EXISTS appointment_types_duration_minutes_check"
+            )
+            connection.exec_driver_sql(
+                "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint "
+                "WHERE conname='appointment_types_duration_nonneg') THEN "
+                "ALTER TABLE appointment_types ADD CONSTRAINT appointment_types_duration_nonneg "
+                "CHECK(duration_minutes>=0); END IF; END $$"
+            )
         if "image_data" not in scan_columns:
             connection.exec_driver_sql("ALTER TABLE scan ADD COLUMN image_data BLOB")
         if "image_content_type" not in scan_columns:
@@ -1796,6 +1904,40 @@ def list_patients(authorization: Optional[str] = Header(default=None)):
         )
 
 
+@app.get("/api/patients/{patient_id}/photo")
+def get_patient_photo(patient_id: int, authorization: Optional[str] = Header(default=None)):
+    current_user(authorization)
+    with engine.connect() as connection:
+        photo = connection.execute(
+            text("SELECT photo FROM patient WHERE id=:id"), {"id": patient_id}
+        ).scalar()
+    if not photo:
+        raise HTTPException(status_code=404, detail="Aucune photo.")
+    return Response(
+        content=bytes(photo),
+        media_type="image/jpeg",
+        headers={"Cache-Control": "private, no-store"},
+    )
+
+
+@app.put("/api/patients/{patient_id}/photo")
+def put_patient_photo(
+    patient_id: int,
+    payload: PatientPhotoPayload,
+    authorization: Optional[str] = Header(default=None),
+):
+    current_user(authorization)
+    raw = decode_photo(payload.photo)
+    with engine.begin() as connection:
+        updated = connection.execute(
+            text("UPDATE patient SET photo=:photo WHERE id=:id RETURNING id"),
+            {"photo": raw, "id": patient_id},
+        ).first()
+    if not updated:
+        raise HTTPException(status_code=404, detail="Patient introuvable.")
+    return {"id": patient_id}
+
+
 @app.patch("/api/patients/{patient_id}", response_model=PatientRead)
 def update_patient(
     patient_id: int,
@@ -1826,6 +1968,15 @@ def update_patient(
                 status_code=422,
                 detail="La date de naissance ne peut pas être dans le futur.",
             )
+    for field in ("prenoms", "lieu_naissance", "nationalite", "adresse", "code_postal", "commune"):
+        if field in changes:
+            changes[field] = " ".join((changes[field] or "").split()) or None
+    if "numero_national" in changes:
+        changes["numero_national"] = normalize_national_number(changes["numero_national"])
+    if "sexe" in changes:
+        changes["sexe"] = (changes["sexe"] or "").strip().upper() or None
+        if changes["sexe"] not in (None, "M", "F", "X"):
+            raise HTTPException(status_code=422, detail="Le sexe doit être M, F ou X.")
     for field in ("mobile", "email", "language"):
         if field in changes:
             value = (changes[field] or "").strip()

@@ -1,3 +1,4 @@
+import re
 from datetime import date, datetime, time
 from decimal import Decimal
 from typing import Literal
@@ -25,6 +26,7 @@ class TransferRequest(BaseModel):
     start_now: bool = False
     new_state: Literal[
         "PLANNED",
+        "URGENT",
         "PRESENT",
         "WAITING",
         "IN_PROGRESS",
@@ -44,19 +46,47 @@ class TransferRequest(BaseModel):
 
 
 class StatusRequest(BaseModel):
-    new_state: Literal[
-        "PLANNED",
-        "PRESENT",
-        "WAITING",
-        "IN_PROGRESS",
-        "RECOVERY",
-        "BILLING",
-        "COMPLETED",
-        "CANCELLED",
-        "NO_SHOW",
-        "POSTPONED",
-    ]
+    new_state: str = Field(min_length=1, max_length=60)
     comment: str | None = Field(default=None, max_length=4000)
+
+
+class PatientCreate(BaseModel):
+    nom: str = Field(min_length=1, max_length=255)
+    prenom: str = Field(min_length=1, max_length=255)
+    date_naissance: date | None = None
+    mobile: str | None = Field(default=None, max_length=50)
+    email: str | None = Field(default=None, max_length=255)
+    language: str | None = Field(default=None, max_length=10)
+    temporary: bool = False
+    force: bool = False
+    prenoms: str | None = Field(default=None, max_length=255)
+    lieu_naissance: str | None = Field(default=None, max_length=255)
+    sexe: str | None = Field(default=None, max_length=1)
+    nationalite: str | None = Field(default=None, max_length=100)
+    adresse: str | None = Field(default=None, max_length=255)
+    code_postal: str | None = Field(default=None, max_length=20)
+    commune: str | None = Field(default=None, max_length=255)
+    numero_national: str | None = Field(default=None, max_length=20)
+    photo: str | None = Field(default=None, max_length=400000)
+
+
+class PatientReconcile(BaseModel):
+    target_id: int | None = None
+    prenoms: str | None = Field(default=None, max_length=255)
+    lieu_naissance: str | None = Field(default=None, max_length=255)
+    sexe: str | None = Field(default=None, max_length=1)
+    nationalite: str | None = Field(default=None, max_length=100)
+    adresse: str | None = Field(default=None, max_length=255)
+    code_postal: str | None = Field(default=None, max_length=20)
+    commune: str | None = Field(default=None, max_length=255)
+    numero_national: str | None = Field(default=None, max_length=20)
+    photo: str | None = Field(default=None, max_length=400000)
+    nom: str | None = Field(default=None, max_length=255)
+    prenom: str | None = Field(default=None, max_length=255)
+    date_naissance: date | None = None
+    mobile: str | None = Field(default=None, max_length=50)
+    email: str | None = Field(default=None, max_length=255)
+    language: str | None = Field(default=None, max_length=10)
 
 
 class RestoreDeletedAppointment(BaseModel):
@@ -77,12 +107,29 @@ class AppointmentCreate(BaseModel):
     ends_at: datetime
     phone: str | None = Field(default=None, max_length=100)
     notes: str | None = Field(default=None, max_length=4000)
+    # Choix propre au rendez-vous : prime sur le réglage par défaut de la salle (None = suivre la salle).
+    show_doctor: bool | None = None
+    show_status: bool | None = None
 
     @model_validator(mode="after")
     def validate_range(self) -> "AppointmentCreate":
         if self.ends_at <= self.starts_at:
             raise ValueError("La fin doit être postérieure au début.")
         return self
+
+
+class StatusCreate(BaseModel):
+    label: str = Field(min_length=1, max_length=60)
+    color: str = Field(default="#64748B", pattern=r"^#[0-9A-Fa-f]{6}$")
+    edge: bool = False
+
+
+class StatusUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    label: str | None = Field(default=None, min_length=1, max_length=60)
+    color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    edge: bool | None = None
+    active: bool | None = None
 
 
 class RoomCreate(BaseModel):
@@ -106,6 +153,7 @@ class RoomUpdate(BaseModel):
     capacity: int | None = Field(default=None, gt=0)
     max_parallel: int | None = Field(default=None, ge=1, le=20)
     show_doctor: bool | None = None
+    show_status: bool | None = None
     default_state: Literal[
         "PRESENT", "WAITING", "IN_PROGRESS", "RECOVERY", "BILLING", "COMPLETED", ""
     ] | None = None
@@ -155,7 +203,7 @@ class SchedulingBlockUpdate(SchedulingBlockBase):
 
 class AppointmentTypeCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
-    duration_minutes: int = Field(gt=0, le=1440)
+    duration_minutes: int = Field(ge=0, le=1440)
     color: str = Field(default="#2563EB", pattern=r"^#[0-9A-Fa-f]{6}$")
 
 
@@ -171,7 +219,7 @@ class RoomOrder(BaseModel):
 class AppointmentTypeUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str | None = Field(default=None, min_length=1, max_length=255)
-    duration_minutes: int | None = Field(default=None, gt=0, le=1440)
+    duration_minutes: int | None = Field(default=None, ge=0, le=1440)
     color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
 
 

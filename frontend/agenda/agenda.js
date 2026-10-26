@@ -198,7 +198,7 @@
     { select: "#editType", list: () => appointmentTypes, empty: "Choisir un type",
       fill: (row) => {
         document.querySelector("#editTypeName").value = row?.name || "";
-        document.querySelector("#editTypeDuration").value = row?.duration_minutes || 30;
+        document.querySelector("#editTypeDuration").value = row?.duration_minutes ?? 30;
         document.querySelector("#editTypeColor").value = (row?.color || "#2563eb").toLowerCase();
       },
       body: () => ({
@@ -363,6 +363,7 @@
     if (!appointmentType) return;
     const start = new Date(document.querySelector("#startsAt").value);
     if (Number.isNaN(start.getTime())) return;
+    if (!appointmentType.duration_minutes) return;
     document.querySelector("#endsAt").value = dateTimeLocal(
       new Date(start.getTime() + appointmentType.duration_minutes * 60_000),
     );

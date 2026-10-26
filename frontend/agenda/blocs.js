@@ -101,6 +101,112 @@
     }
   });
 
+  const statusRoom = document.querySelector("#statusShowRoom");
+  const statusToggle = document.querySelector("#statusShowToggle");
+  const statusMessage = document.querySelector("#statusShowMessage");
+  const syncShowStatus = () => {
+    statusToggle.checked = Boolean(roomList.find((entry) => entry.id === statusRoom.value)?.show_status);
+    statusMessage.textContent = "";
+  };
+  statusRoom.addEventListener("change", syncShowStatus);
+  document.querySelector("#statusShowSave").addEventListener("click", async () => {
+    statusMessage.classList.remove("ok");
+    try {
+      if (!statusRoom.value) throw new Error("Choisissez une salle.");
+      await request(`/rooms/${statusRoom.value}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ show_status: statusToggle.checked }),
+      });
+      roomList.find((entry) => entry.id === statusRoom.value).show_status = statusToggle.checked;
+      statusMessage.classList.add("ok");
+      statusMessage.textContent = statusToggle.checked ? "Le statut sera affiché." : "Affichage du statut désactivé.";
+      document.dispatchEvent(new CustomEvent("blocks:changed"));
+    } catch (error) {
+      statusMessage.textContent = error.message;
+    }
+  });
+
+  const colorGrid = document.querySelector("#statusColorGrid");
+  const colorMessage = document.querySelector("#statusColorMessage");
+  const jsonRequest = (path, method, body) => request(path, {
+    method,
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  async function loadStatusColors() {
+    try {
+      const statuses = await request("/statuses");
+      colorGrid.replaceChildren();
+      for (const status of statuses) {
+        const row = document.createElement("div");
+        row.className = `status-row${status.active ? "" : " is-off"}`;
+        row.dataset.code = status.code;
+        const color = document.createElement("input");
+        color.type = "color";
+        color.className = "st-color";
+        color.value = status.color.toLowerCase();
+        color.title = "Couleur du statut";
+        const label = document.createElement("input");
+        label.type = "text";
+        label.className = "st-label";
+        label.value = status.label;
+        label.maxLength = 60;
+        const edge = document.createElement("label");
+        edge.className = "st-flag";
+        edge.title = "Colorer le bord gauche du rendez-vous avec la couleur du statut";
+        edge.innerHTML = '<input type="checkbox" class="st-edge"> Bord';
+        edge.querySelector("input").checked = status.edge;
+        const active = document.createElement("label");
+        active.className = "st-flag";
+        active.innerHTML = '<input type="checkbox" class="st-active"> Actif';
+        active.querySelector("input").checked = status.active;
+        active.querySelector("input").disabled = status.builtin;
+        row.append(color, label, edge, active);
+        colorGrid.append(row);
+      }
+      const add = document.createElement("div");
+      add.className = "status-row status-add";
+      add.innerHTML = '<input type="color" class="st-color" value="#2563eb" title="Couleur"><input type="text" class="st-label" maxlength="60" placeholder="Nouveau statut (ex. Urgence vitale)"><label class="st-flag"><input type="checkbox" class="st-edge"> Bord</label>';
+      colorGrid.append(add);
+    } catch (error) {
+      colorMessage.textContent = error.message;
+    }
+  }
+  document.querySelector("#statusColorSave").addEventListener("click", async () => {
+    colorMessage.classList.remove("ok");
+    colorMessage.textContent = "";
+    try {
+      for (const row of colorGrid.querySelectorAll(".status-row:not(.status-add)")) {
+        const label = row.querySelector(".st-label").value.trim();
+        if (!label) throw new Error("Un statut doit avoir un nom.");
+        const body = {
+          label,
+          color: row.querySelector(".st-color").value,
+          edge: row.querySelector(".st-edge").checked,
+        };
+        if (!row.querySelector(".st-active").disabled) body.active = row.querySelector(".st-active").checked;
+        await jsonRequest(`/statuses/${encodeURIComponent(row.dataset.code)}`, "PATCH", body);
+      }
+      const add = colorGrid.querySelector(".status-add");
+      const newLabel = add.querySelector(".st-label").value.trim();
+      if (newLabel) {
+        await jsonRequest("/statuses", "POST", {
+          label: newLabel,
+          color: add.querySelector(".st-color").value,
+          edge: add.querySelector(".st-edge").checked,
+        });
+      }
+      await loadStatusColors();
+      colorMessage.classList.add("ok");
+      colorMessage.textContent = newLabel ? "Statuts enregistrés, nouveau statut ajouté." : "Statuts enregistrés.";
+      document.dispatchEvent(new CustomEvent("blocks:changed"));
+    } catch (error) {
+      colorMessage.textContent = error.message;
+    }
+  });
+  loadStatusColors();
+
   const editRoom = document.querySelector("#editRoom");
   const editMessage = document.querySelector("#editRoomMessage");
 
@@ -342,6 +448,10 @@
       fillSelect(showRoom, rooms, "Choisir une salle");
       showRoom.value = document.querySelector("#roomFilter").value;
       syncShowDoctor();
+      fillSelect(statusRoom, rooms, "Choisir une salle");
+      statusRoom.value = document.querySelector("#roomFilter").value;
+      syncShowStatus();
+      loadStatusColors();
       fillSelect(editRoom, rooms, "Choisir une salle");
       editRoom.value = typeof keepRoom === "string" ? keepRoom : document.querySelector("#roomFilter").value;
       syncEditRoom();

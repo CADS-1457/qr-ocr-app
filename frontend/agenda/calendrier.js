@@ -15,6 +15,7 @@
   const MAX_MONTH_EVENTS = 3;
   const STATE_LABELS = {
     PLANNED: "Planifié",
+    URGENT: "Urgence",
     PRESENT: "Présent",
     WAITING: "En attente",
     IN_PROGRESS: "En cours",
@@ -23,6 +24,12 @@
     CANCELLED: "Annulé",
     NO_SHOW: "Absent",
   };
+
+  let statusList = [];
+  let statusColors = {};
+  const statusColor = (state) => statusColors[state] || "#94a3b8";
+  const statusLabel = (state) => statusList.find((item) => item.code === state)?.label || STATE_LABELS[state] || state;
+  const statusEdge = (state) => Boolean(statusList.find((item) => item.code === state)?.edge);
 
   const savedView = localStorage.getItem("calendarView");
   let view = ["day", "week", "month"].includes(savedView) ? savedView : "week";
@@ -88,6 +95,15 @@
     if (className) node.className = className;
     if (text !== undefined) node.textContent = text;
     return node;
+  }
+
+  function tempChip() {
+    const chip = el("span", "temp-chip");
+    chip.innerHTML = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>';
+    chip.title = "Patient temporaire : à réconcilier avec la base patient à l'accueil";
+    chip.setAttribute("role", "img");
+    chip.setAttribute("aria-label", "Patient temporaire");
+    return chip;
   }
 
   function populate(select, entries, placeholder) {
@@ -176,10 +192,72 @@
     )}`;
   }
 
+  // Le bord gauche suit le statut (ou l'urgence) ; le fond reste celui de la plage / du type.
+  function edgeColor(event) {
+    if (statusEdge(event.state)) return statusColor(event.state);
+    if (/urgen/i.test(event.appointment_type || "")) return "#dc2626";
+    return null;
+  }
+
   function eventColor(event) {
     const transferred = event.lane_room_id && event.lane_room_id !== event.room_id;
     const laneColor = transferred ? rooms.find((room) => room.id === event.lane_room_id)?.color : null;
     return laneColor || event.type_color || event.room_color || "#0f4c81";
+  }
+
+  let hoverCard = null;
+  let hoverTimer = null;
+  const hideHoverCard = () => {
+    clearTimeout(hoverTimer);
+    if (hoverCard) hoverCard.hidden = true;
+  };
+  function showHoverCard(node, event) {
+    if (!hoverCard) {
+      hoverCard = el("div", "event-hover-card");
+      hoverCard.setAttribute("role", "tooltip");
+      hoverCard.hidden = true;
+      document.body.append(hoverCard);
+    }
+    const rows = [
+      ["Heure", `${formatTime(new Date(event.starts_at))} – ${formatTime(new Date(event.ends_at))}`],
+      ["Type", event.appointment_type],
+      ["Salle", event.room],
+      ["Médecin", event.doctor],
+      ["Statut", statusLabel(event.state), statusColor(event.state)],
+      ["Produit(s)", event.planned_products > 0 ? event.planned_products_label || String(event.planned_products) : ""],
+      ["Notes", event.notes?.trim()],
+    ].filter(([, value]) => value);
+    const title = el("strong", "", event.patient_name);
+    if (event.patient_temporary) title.append(" (patient temporaire)");
+    hoverCard.replaceChildren(title);
+    for (const [label, value, color] of rows) {
+      const row = el("div", "ehc-row");
+      const cell = el("span", "ehc-value", value);
+      if (color) {
+        const dot = el("span", "status-dot");
+        dot.style.background = color;
+        cell.prepend(dot);
+      }
+      row.append(el("span", "ehc-label", label), cell);
+      hoverCard.append(row);
+    }
+    hoverCard.hidden = false;
+    const rect = node.getBoundingClientRect();
+    const width = hoverCard.offsetWidth;
+    const height = hoverCard.offsetHeight;
+    let left = rect.right + 8;
+    if (left + width > window.innerWidth - 8) left = Math.max(8, rect.left - width - 8);
+    const top = Math.min(Math.max(8, rect.top), Math.max(8, window.innerHeight - height - 8));
+    hoverCard.style.left = `${left}px`;
+    hoverCard.style.top = `${top}px`;
+  }
+  function attachHoverCard(node, event) {
+    node.addEventListener("mouseenter", () => {
+      clearTimeout(hoverTimer);
+      hoverTimer = setTimeout(() => showHoverCard(node, event), 450);
+    });
+    node.addEventListener("mouseleave", hideHoverCard);
+    node.addEventListener("pointerdown", hideHoverCard);
   }
 
   function eventTitle(event) {
@@ -311,11 +389,68 @@
     return section;
   }
 
+  // Surréservation : la salle autorise plusieurs rendez-vous simultanés et la plage de ce rendez-vous n'est pas pleine.
+  function overbookSeats(event) {
+    const room = rooms.find((item) => item.id === event.room_id);
+    const limit = room?.max_parallel || 1;
+    if (limit < 2) return null;
+    const start = new Date(event.starts_at).getTime();
+    const end = new Date(event.ends_at).getTime();
+    if (end <= Date.now()) return null;
+    const others = events.filter((item) => item.room_id === event.room_id
+      && !["CANCELLED", "NO_SHOW", "POSTPONED"].includes(item.state)
+      && new Date(item.starts_at).getTime() < end && new Date(item.ends_at).getTime() > start);
+    const points = [start, ...others.map((item) => new Date(item.starts_at).getTime()).filter((time) => time > start && time < end)];
+    const used = Math.max(...points.map((point) => others.filter((item) =>
+      new Date(item.starts_at).getTime() <= point && new Date(item.ends_at).getTime() > point).length));
+    return used < limit ? { used, limit } : null;
+  }
+
+  // Changement rapide de statut depuis la fiche du rendez-vous.
+  function statusPicker(event) {
+    const cell = el("dd", "status-pick");
+    const dot = el("span", "status-dot");
+    dot.style.background = statusColor(event.state);
+    const select = el("select", "status-select");
+    select.setAttribute("aria-label", "Changer le statut");
+    const options = Object.fromEntries(
+      statusList.filter((item) => item.active || item.code === event.state).map((item) => [item.code, item.label]),
+    );
+    if (!options[event.state]) options[event.state] = statusLabel(event.state);
+    for (const [code, label] of Object.entries(options)) {
+      const option = el("option", "", label);
+      option.value = code;
+      select.append(option);
+    }
+    select.value = event.state;
+    select.addEventListener("change", async () => {
+      select.disabled = true;
+      try {
+        await request(`/appointments/${event.id}/status`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ new_state: select.value, comment: "Statut modifié depuis le calendrier" }),
+        });
+        document.querySelector("#detailDialog").close();
+        showMessage(`Statut : ${options[select.value]}.`);
+      } catch (error) {
+        select.value = event.state;
+        showMessage(error.message, true);
+      }
+      await load();
+    });
+    cell.append(dot, select);
+    return cell;
+  }
+
   function openDetail(event) {
     const start = new Date(event.starts_at);
     const end = new Date(event.ends_at);
     const body = document.querySelector("#detailBody");
-    body.replaceChildren(el("h2", "", event.patient_name));
+    const title = el("h2", "temp-title");
+    title.append(el("span", "temp-name", event.patient_name));
+    if (event.patient_temporary) title.append(tempChip());
+    body.replaceChildren(title);
     const list = el("dl", "detail-list");
     const rows = [
       [
@@ -328,7 +463,7 @@
         }),
       ],
       ["Heure", `${formatTime(start)} – ${formatTime(end)}`],
-      ["Statut", STATE_LABELS[event.state] || event.state],
+      ["Statut", statusLabel(event.state)],
       ["Type", event.appointment_type],
       ["Salle", event.current_location && event.current_location !== event.room
         ? `${event.current_location} (venant de : ${event.room})`
@@ -339,6 +474,10 @@
     ];
     for (const [label, value] of rows) {
       if (!value) continue;
+      if (label === "Statut") {
+        list.append(el("dt", "", label), statusPicker(event));
+        continue;
+      }
       list.append(el("dt", "", label), el("dd", "", value));
     }
     body.append(list);
@@ -359,6 +498,14 @@
     document.querySelector("#detailEdit").hidden = !open;
     document.querySelector("#detailCancel").hidden = !open;
     document.querySelector("#detailDelete").hidden = event.state !== "PLANNED";
+    document.querySelector("#detailReconcile").hidden = !event.patient_temporary;
+    const overbook = document.querySelector("#detailOverbook");
+    const seats = open ? overbookSeats(event) : null;
+    overbook.hidden = !seats;
+    if (seats) {
+      overbook.title = `Ajouter un patient sur cette plage (${seats.used}/${seats.limit} places, surréservation)`;
+      overbook.setAttribute("aria-label", overbook.title);
+    }
     document.querySelector("#detailOpen").href = `agenda.html?day=${isoDay(start)}`;
     const transferLink = document.querySelector("#detailTransfer");
     transferLink.hidden = !open || !sameDay(start, new Date());
@@ -765,9 +912,15 @@
         lanes.labels.forEach((label, position) => {
           const head = el("span", "", label);
           if (canReorder) {
+            head.addEventListener("click", (click) => {
+              click.stopPropagation();
+              document.dispatchEvent(new CustomEvent("exceptions:open", {
+                detail: { day: isoDay(day), roomId: lanes.rooms[position] },
+              }));
+            });
             head.draggable = true;
             head.classList.add("reorderable");
-            head.title = "Glisser pour changer l'ordre des colonnes";
+            head.title = "Cliquer pour bloquer cette salle · glisser pour changer l'ordre des colonnes";
             head.addEventListener("dragstart", (dragEvent) => {
               dragEvent.dataTransfer.setData("text/plain", String(position));
               dragEvent.dataTransfer.effectAllowed = "move";
@@ -865,8 +1018,9 @@
         const height = Math.max(((end - start) / 3_600_000) * HOUR_HEIGHT, 20);
         const block = el("button", `cal-event ${event.state}`);
         block.type = "button";
-        block.title = eventTitle(event);
+        attachHoverCard(block, event);
         block.style.setProperty("--event-color", eventColor(event));
+        if (edgeColor(event)) block.style.setProperty("--edge-color", edgeColor(event));
         block.style.top = `${top}px`;
         block.style.height = `${height - 2}px`;
         const laneWidth = 100 / laneCount;
@@ -876,9 +1030,20 @@
           el("strong", "", event.patient_name),
           el("span", "", `${formatTime(new Date(event.starts_at))} · ${event.appointment_type || event.room}`),
         );
+        if (event.patient_temporary) {
+          block.classList.add("temp-patient");
+          const title = block.querySelector("strong");
+          title.replaceChildren(el("span", "temp-name", event.patient_name), tempChip());
+        }
+        if (event.show_status) {
+          const dot = el("span", "status-dot");
+          dot.style.background = statusColor(event.state);
+          dot.title = statusLabel(event.state);
+          block.querySelector("strong").prepend(dot);
+        }
         if (height >= 62 && event.notes?.trim()) block.append(el("span", "cal-event-note", event.notes.trim()));
-        if (event.show_doctor && event.doctor) {
-          block.append(el("span", "cal-event-doctor", event.doctor));
+        if (event.doctor) {
+          if (event.show_doctor) block.append(el("span", "cal-event-doctor", event.doctor));
           const badge = el("span", "cal-event-doctor-icon");
           badge.title = `Médecin : ${event.doctor}`;
           badge.innerHTML = DOCTOR_ICON;
@@ -960,6 +1125,13 @@
           `${formatTime(new Date(event.starts_at))} ${event.patient_name}`,
         );
         chip.type = "button";
+        if (event.patient_temporary) {
+          chip.classList.add("temp-patient");
+          chip.replaceChildren(
+            el("span", "temp-name", `${formatTime(new Date(event.starts_at))} ${event.patient_name}`),
+            tempChip(),
+          );
+        }
         if (!CLOSED_STATES.includes(event.state)) {
           chip.draggable = true;
           chip.addEventListener("dragstart", (drag) => {
@@ -967,7 +1139,7 @@
             drag.dataTransfer.effectAllowed = "move";
           });
         }
-        chip.title = eventTitle(event);
+        attachHoverCard(chip, event);
         if (event.planned_products > 0) {
           const products = el("span", "month-event-products");
           products.title = productsTitle(event);
@@ -975,6 +1147,7 @@
           chip.append(products);
         }
         chip.style.setProperty("--event-color", eventColor(event));
+        if (edgeColor(event)) chip.style.setProperty("--edge-color", edgeColor(event));
         chip.addEventListener("click", (clickEvent) => {
           clickEvent.stopPropagation();
           openDetail(event);
@@ -1073,12 +1246,15 @@
       const availabilityParams = new URLSearchParams({ start: isoDay(start), end: isoDay(end) });
       if (room) availabilityParams.set("room_id", room);
       if (doctor) availabilityParams.set("doctor_id", doctor);
-      const [data, slots, exceptionRows] = await Promise.all([
+      const [data, slots, exceptionRows, colorRows] = await Promise.all([
         request(`/range-view?${params}`),
         request(`/availability?${availabilityParams}`),
         request(`/schedule-exceptions?start=${isoDay(start)}&end=${isoDay(end)}`).catch(() => []),
+        request("/statuses").catch(() => statusList),
       ]);
       if (token !== loadToken) return;
+      statusList = colorRows;
+      statusColors = Object.fromEntries(colorRows.map((item) => [item.code, item.color]));
       const inGroup = groupRoomIds();
       const roomOk = (id) => !pickedRooms.length || pickedRooms.includes(id);
       const doctorOk = (id) => !pickedDoctors.length || pickedDoctors.includes(id);
@@ -1147,13 +1323,107 @@
     );
     populate(
       document.querySelector("#patient"),
-      patientRows.map((patient) => ({ id: patient.id, display_name: patient.display_name })),
+      patientRows.map(patientOption),
       "Choisir un patient",
     );
     document.querySelector("#newAppointment").disabled = roomRows.length === 0;
   }
 
   const isAdminUser = () => ["admin", "superadmin"].includes(window.AppAuth.user()?.role);
+
+  let patientFilterTimer;
+  let patientMatches = [];
+  let patientActive = -1;
+  const patientPanel = () => document.querySelector("#patientResults");
+  function setPatientPanel(open) {
+    patientPanel().hidden = !open;
+    document.querySelector("#patientFilter").setAttribute("aria-expanded", String(open));
+  }
+  function highlightPatient(index) {
+    const items = [...patientPanel().children];
+    patientActive = items.length ? (index + items.length) % items.length : -1;
+    items.forEach((item, i) => item.classList.toggle("active", i === patientActive));
+    items[patientActive]?.scrollIntoView({ block: "nearest" });
+  }
+  function renderPatientPanel() {
+    const panel = patientPanel();
+    panel.replaceChildren();
+    for (const row of patientMatches) {
+      const item = document.createElement("div");
+      item.setAttribute("role", "option");
+      item.dataset.id = row.id;
+      item.className = "patient-result";
+      const name = document.createElement("span");
+      name.textContent = row.display_name;
+      const born = document.createElement("small");
+      born.textContent = row.is_temporary ? "temporaire" : new Date(`${row.date_naissance}T00:00:00`).toLocaleDateString("fr-BE");
+      item.append(name, born);
+      panel.append(item);
+    }
+    if (!patientMatches.length) {
+      const empty = document.createElement("div");
+      empty.className = "patient-result empty";
+      empty.textContent = "Aucun patient trouvé";
+      panel.append(empty);
+    }
+    patientActive = -1;
+  }
+  function choosePatient(id) {
+    const select = document.querySelector("#patient");
+    select.value = String(id);
+    select._refresh?.();
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+    setPatientPanel(false);
+  }
+  async function refreshPatientOptions(keepId) {
+    const select = document.querySelector("#patient");
+    const params = new URLSearchParams();
+    const text = document.querySelector("#patientFilter").value.trim();
+    if (text) params.set("query", text);
+    const kept = keepId ?? select.value;
+    if (kept) params.set("include_id", kept);
+    try {
+      const rows = await request(`/patients?${params}`);
+      populate(select, rows.map(patientOption), "Choisir un patient");
+      select.value = kept || "";
+      patientMatches = rows;
+      renderPatientPanel();
+    } catch (error) {
+      showMessage(error.message, true);
+    }
+  }
+  const patientOption = (patient) => ({
+    id: patient.id,
+    display_name: patient.is_temporary ? `${patient.display_name} (temporaire)` : patient.display_name,
+  });
+  const schedulePatientRefresh = () => {
+    clearTimeout(patientFilterTimer);
+    patientFilterTimer = setTimeout(refreshPatientOptions, 250);
+  };
+  const patientFilterInput = document.querySelector("#patientFilter");
+  patientFilterInput.addEventListener("input", () => { setPatientPanel(true); schedulePatientRefresh(); });
+  patientFilterInput.addEventListener("focus", () => setPatientPanel(true));
+  patientFilterInput.addEventListener("blur", () => setPatientPanel(false));
+  patientFilterInput.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      setPatientPanel(true);
+      highlightPatient(patientActive + (event.key === "ArrowDown" ? 1 : -1));
+    } else if (event.key === "Enter" && !patientPanel().hidden && patientActive >= 0) {
+      event.preventDefault();
+      choosePatient(patientPanel().children[patientActive].dataset.id);
+    } else if (event.key === "Escape" && !patientPanel().hidden) {
+      event.stopPropagation();
+      event.preventDefault();
+      setPatientPanel(false);
+    }
+  });
+  // mousedown (et non click) pour choisir avant que le champ perde le focus.
+  patientPanel().addEventListener("mousedown", (event) => {
+    event.preventDefault();
+    const item = event.target.closest(".patient-result[data-id]");
+    if (item) choosePatient(item.dataset.id);
+  });
 
   // Fermeture bloquante couvrant le créneau (salle et médecin connus) : seuls les administrateurs peuvent forcer.
   function closureFor(start, end, roomId, doctorId) {
@@ -1187,11 +1457,13 @@
       }
     }
     document.querySelector("#appointmentForm").reset();
+    refreshPatientOptions("");
     document.querySelector("#startsAt").value = toLocalInput(base);
     document.querySelector("#endsAt").value = toLocalInput(
       new Date(base.getTime() + durationMinutes * 60_000),
     );
     if (room) document.querySelector("#appointmentRoom").value = room;
+    syncShowDoctorDefault();
     if (extra.doctorId) document.querySelector("#doctor").value = extra.doctorId;
     if (extra.typeId) document.querySelector("#appointmentType").value = extra.typeId;
     document.querySelector("#appointmentError").textContent = "";
@@ -1202,15 +1474,28 @@
     document.querySelector("#appointmentDialog").showModal();
   }
 
+  // Nouveau rendez-vous : la case reprend le réglage de la salle choisie (modifiable pour ce rendez-vous).
+  function syncShowDoctorDefault() {
+    const room = rooms.find((item) => item.id === document.querySelector("#appointmentRoom").value);
+    document.querySelector("#showDoctor").checked = Boolean(room?.show_doctor);
+    document.querySelector("#showStatus").checked = Boolean(room?.show_status);
+  }
+  document.querySelector("#appointmentRoom").addEventListener("change", () => {
+    if (!editingId) syncShowDoctorDefault();
+  });
+
   function openEdit(event) {
     const value = (selector, content) => { document.querySelector(selector).value = content ?? ""; };
     document.querySelector("#appointmentForm").reset();
     editingId = event.id;
+    refreshPatientOptions(event.patient_id).then(() => value("#patient", event.patient_id));
     value("#patient", event.patient_id);
     value("#appointmentType", event.appointment_type_id);
     value("#appointmentRoom", event.room_id);
     value("#doctor", event.doctor_id);
     value("#operator", event.operator_id);
+    document.querySelector("#showDoctor").checked = Boolean(event.show_doctor);
+    document.querySelector("#showStatus").checked = Boolean(event.show_status);
     value("#startsAt", toLocalInput(new Date(event.starts_at)));
     value("#endsAt", toLocalInput(new Date(event.ends_at)));
     value("#notes", event.notes);
@@ -1249,6 +1534,17 @@
   window.confirmAction = confirmAction;
 
   document.querySelector("#detailEdit").addEventListener("click", () => openEdit(currentEvent));
+  document.querySelector("#detailOverbook").addEventListener("click", () => {
+    const event = currentEvent;
+    document.querySelector("#detailDialog").close();
+    const start = new Date(event.starts_at);
+    const minutes = Math.max(5, Math.round((new Date(event.ends_at) - start) / 60_000));
+    openCreate(start, minutes, event.room_id, { laneRoom: event.room_id, doctorId: event.doctor_id || "" });
+    if (document.querySelector("#appointmentDialog").open) {
+      showMessage("Surréservation : recherchez le patient à ajouter sur cette plage.");
+      document.querySelector("#patientFilter").focus();
+    }
+  });
   document.querySelector("#detailFollowUp").addEventListener("click", () => {
     window.openDayFollowUp(currentEvent);
   });
@@ -1294,6 +1590,306 @@
       showMessage(error.message, true);
     }
     await load();
+  });
+
+  const newPatientDialog = document.querySelector("#newPatientDialog");
+  const patientError = document.querySelector("#npError");
+  document.querySelector("#npTemporary").addEventListener("change", (event) => {
+    document.querySelector("#npDob").required = !event.target.checked;
+  });
+  const eidStatus = document.querySelector("#npEidStatus");
+  const IDENTITY_INPUTS = {
+    prenoms: "#npPrenoms", lieu_naissance: "#npLieu", sexe: "#npSexe", nationalite: "#npNationalite",
+    adresse: "#npAdresse", code_postal: "#npCodePostal", commune: "#npCommune",
+  };
+  let cardPhoto = null;
+  const formatNN = (value) => {
+    const d = String(value || "").replace(/\D/g, "");
+    return d.length === 11 ? `${d.slice(0, 2)}.${d.slice(2, 4)}.${d.slice(4, 6)}-${d.slice(6, 9)}.${d.slice(9)}` : d;
+  };
+  function showCardPhoto(photo) {
+    cardPhoto = photo || null;
+    const img = document.querySelector("#npPhoto");
+    img.hidden = !cardPhoto;
+    document.querySelector("#npPhotoEmpty").hidden = Boolean(cardPhoto);
+    if (cardPhoto) img.src = `data:image/jpeg;base64,${cardPhoto}`;
+  }
+  const matchBox = document.querySelector("#npMatch");
+  let matchedPatient = null;
+  let forceCreate = false;
+  const hideMatch = () => { matchBox.hidden = true; matchedPatient = null; };
+  for (const id of ["#npNom", "#npPrenom", "#npDob"]) {
+    document.querySelector(id).addEventListener("input", () => { forceCreate = false; hideMatch(); });
+  }
+  // Patient déjà connu (même nom, prénom et date de naissance) : mise à jour ou nouvelle fiche au choix.
+  async function findExistingPatient() {
+    const nom = document.querySelector("#npNom").value.trim();
+    const prenom = document.querySelector("#npPrenom").value.trim();
+    const dob = document.querySelector("#npDob").value;
+    const nn = document.querySelector("#npNational").value.trim();
+    if ((!nom || !prenom || !dob) && !nn) return null;
+    if (document.querySelector("#npTemporary").checked) return null;
+    const params = new URLSearchParams({ nom, prenom, date_naissance: dob });
+    const national = document.querySelector("#npNational").value.trim();
+    if (national) params.set("numero_national", national);
+    return request(`/patients/match?${params}`);
+  }
+  async function offerMatch() {
+    const existing = await findExistingPatient();
+    if (!existing) return false;
+    matchedPatient = existing;
+    const born = new Date(`${existing.date_naissance}T00:00:00`).toLocaleDateString("fr-BE");
+    document.querySelector("#npMatchText").textContent =
+      `Ce patient est déjà connu : ${existing.display_name}, né(e) le ${born} (n° ${existing.id}). Mettre à jour sa fiche avec les informations saisies, ou créer un nouveau patient ?`;
+    matchBox.hidden = false;
+    return true;
+  }
+  const identityPayload = () => ({
+    ...Object.fromEntries(Object.entries(IDENTITY_INPUTS).map(([key, selector]) => [key, document.querySelector(selector).value.trim() || null])),
+    numero_national: document.querySelector("#npNational").value.trim() || null,
+    photo: cardPhoto,
+  });
+  function selectPatientOption(id, label) {
+    const select = document.querySelector("#patient");
+    if (![...select.options].some((option) => option.value === String(id))) {
+      const option = document.createElement("option");
+      option.value = id;
+      option.textContent = label;
+      select.append(option);
+    }
+    select.value = String(id);
+    select._refresh?.();
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  document.querySelector("#npMatchUpdate").addEventListener("click", async () => {
+    patientError.textContent = "";
+    try {
+      const body = identityPayload();
+      if (Object.values(body).some(Boolean)) {
+        await request(`/patients/${matchedPatient.id}/identity`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+      }
+      selectPatientOption(matchedPatient.id, matchedPatient.display_name);
+      showMessage("Fiche du patient mise à jour.");
+      newPatientDialog.close();
+    } catch (error) {
+      patientError.textContent = error.message;
+    }
+  });
+  document.querySelector("#npMatchCreate").addEventListener("click", () => {
+    forceCreate = true;
+    hideMatch();
+    document.querySelector("#newPatientForm").requestSubmit();
+  });
+  document.querySelector("#npReadEid").addEventListener("click", async () => {
+    hideMatch();
+    forceCreate = false;
+    eidStatus.textContent = "Lecture de la carte…";
+    patientError.textContent = "";
+    try {
+      const card = await window.EidReader.read();
+      document.querySelector("#npNom").value = card.nom || "";
+      document.querySelector("#npPrenom").value = card.prenom || "";
+      if (card.date_naissance) document.querySelector("#npDob").value = card.date_naissance;
+      for (const [key, selector] of Object.entries(IDENTITY_INPUTS)) {
+        document.querySelector(selector).value = card[key] || "";
+      }
+      document.querySelector("#npNational").value = formatNN(card.numero_national);
+      showCardPhoto(card.photo);
+      document.querySelector(".np-identity").open = true;
+      document.querySelector("#npTemporary").checked = false;
+      document.querySelector("#npDob").required = true;
+      eidStatus.textContent = card.date_naissance
+        ? "Carte lue. Vérifiez les informations avant de créer le patient."
+        : "Carte lue, mais la date de naissance est à saisir.";
+      await offerMatch();
+    } catch (error) {
+      eidStatus.textContent = "";
+      patientError.textContent = error.message;
+    }
+  });
+  document.querySelector("#newPatientBtn").addEventListener("click", () => {
+    eidStatus.textContent = "";
+    hideMatch();
+    forceCreate = false;
+    showCardPhoto(null);
+    document.querySelector("#newPatientForm").reset();
+    document.querySelector("#npDob").required = true;
+    document.querySelector(".np-identity").open = false;
+    patientError.textContent = "";
+    newPatientDialog.showModal();
+    document.querySelector("#npNom").focus();
+  });
+  document.querySelector("#npCancel").addEventListener("click", () => newPatientDialog.close());
+  document.querySelector("#newPatientForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    patientError.textContent = "";
+    const field = (id) => document.querySelector(id).value.trim();
+    try {
+      if (!forceCreate && await offerMatch()) return;
+      const created = await request("/patients", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          nom: field("#npNom"),
+          prenom: field("#npPrenom"),
+          date_naissance: field("#npDob") || null,
+          mobile: field("#npMobile") || null,
+          email: field("#npEmail") || null,
+          language: field("#npLanguage") || null,
+          temporary: document.querySelector("#npTemporary").checked,
+          force: forceCreate,
+          numero_national: field("#npNational") || null,
+          photo: cardPhoto,
+          ...Object.fromEntries(Object.entries(IDENTITY_INPUTS).map(([key, selector]) => [key, field(selector) || null])),
+        }),
+      });
+      const select = document.querySelector("#patient");
+      const option = document.createElement("option");
+      option.value = created.id;
+      option.textContent = created.is_temporary ? `${created.display_name} (temporaire)` : created.display_name;
+      select.append(option);
+      select.value = String(created.id);
+      select._refresh?.();
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      newPatientDialog.close();
+    } catch (error) {
+      patientError.textContent = error.message;
+    }
+  });
+
+  // Réconciliation des patients temporaires avec la base patient (à l'accueil).
+  const temporaryDialog = document.querySelector("#temporaryDialog");
+  const reconcileDialog = document.querySelector("#reconcileDialog");
+  const rcError = document.querySelector("#rcError");
+  const rcField = (id) => document.querySelector(id).value.trim();
+  let reconcileId = null;
+  let reconcileTimer;
+
+  const reconcileMode = () => document.querySelector("input[name=reconcileMode]:checked").value;
+  function syncReconcileMode() {
+    const merge = reconcileMode() === "merge";
+    document.querySelector("#reconcileConvert").hidden = merge;
+    document.querySelector("#reconcileMerge").hidden = !merge;
+  }
+  document.querySelectorAll("input[name=reconcileMode]").forEach((radio) => radio.addEventListener("change", syncReconcileMode));
+
+  async function searchReconcileTargets() {
+    const term = rcField("#rcSearch");
+    const target = document.querySelector("#rcTarget");
+    target.replaceChildren();
+    if (term.length < 2) return;
+    const rows = await request(`/patients?query=${encodeURIComponent(term)}`);
+    for (const row of rows.filter((patient) => !patient.is_temporary)) {
+      const option = document.createElement("option");
+      option.value = row.id;
+      option.textContent = `${row.display_name} · né(e) le ${row.date_naissance} · n° ${row.id}`;
+      target.append(option);
+    }
+    if (!target.options.length) target.append(new Option("Aucun dossier trouvé", "", false, false));
+  }
+  document.querySelector("#rcSearch").addEventListener("input", () => {
+    clearTimeout(reconcileTimer);
+    reconcileTimer = setTimeout(() => searchReconcileTargets().catch((error) => { rcError.textContent = error.message; }), 250);
+  });
+
+  async function openReconcile(patientId) {
+    rcError.textContent = "";
+    reconcileId = patientId;
+    document.querySelector("#reconcileForm").reset();
+    syncReconcileMode();
+    document.querySelector("#rcTarget").replaceChildren();
+    try {
+      const temp = (await request("/patients/temporary")).find((row) => row.id === patientId);
+      if (!temp) throw new Error("Ce patient n'est plus temporaire.");
+      document.querySelector("#reconcileTitle").textContent = `Réconcilier ${temp.prenom} ${temp.nom}`;
+      document.querySelector("#rcNom").value = temp.nom;
+      document.querySelector("#rcPrenom").value = temp.prenom;
+      document.querySelector("#rcMobile").value = temp.mobile || "";
+      document.querySelector("#rcEmail").value = temp.email || "";
+      document.querySelector("#rcSearch").value = temp.nom;
+      searchReconcileTargets().catch(() => {});
+      reconcileDialog.showModal();
+    } catch (error) {
+      showMessage(error.message, true);
+    }
+  }
+
+  async function renderTemporaryList() {
+    const list = document.querySelector("#temporaryList");
+    list.replaceChildren(el("p", "hint", "Chargement…"));
+    try {
+      const rows = await request("/patients/temporary");
+      list.replaceChildren();
+      if (!rows.length) list.append(el("p", "hint", "Aucun patient temporaire à réconcilier."));
+      for (const row of rows) {
+        const card = el("article", "deleted-appointment is-temp");
+        const info = el("div", "deleted-appointment-info");
+        const name = el("strong", "temp-title");
+        name.append(el("span", "temp-name", `${row.prenom} ${row.nom}`), tempChip());
+        info.append(
+          name,
+          el("span", "", `Créé le ${new Date(row.created_at).toLocaleDateString("fr-BE")} · ${row.appointments} rendez-vous`),
+        );
+        if (row.mobile || row.email) info.append(el("span", "", [row.mobile, row.email].filter(Boolean).join(" · ")));
+        const go = el("button", "secondary", "Réconcilier");
+        go.type = "button";
+        go.addEventListener("click", () => {
+          temporaryDialog.close();
+          openReconcile(row.id);
+        });
+        card.append(info, go);
+        list.append(card);
+      }
+    } catch (error) {
+      list.replaceChildren(el("p", "form-error", error.message));
+    }
+  }
+
+  document.querySelector("#manageTemporary").addEventListener("click", () => {
+    temporaryDialog.showModal();
+    renderTemporaryList();
+  });
+  document.querySelector("#detailReconcile").addEventListener("click", () => {
+    if (!currentEvent) return;
+    document.querySelector("#detailDialog").close();
+    openReconcile(currentEvent.patient_id);
+  });
+  document.querySelector("#rcCancel").addEventListener("click", () => reconcileDialog.close());
+  document.querySelector("#reconcileForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    rcError.textContent = "";
+    const merge = reconcileMode() === "merge";
+    const body = merge
+      ? { target_id: Number(document.querySelector("#rcTarget").value) || null }
+      : {
+        nom: rcField("#rcNom"),
+        prenom: rcField("#rcPrenom"),
+        date_naissance: rcField("#rcDob") || null,
+        mobile: rcField("#rcMobile") || null,
+        email: rcField("#rcEmail") || null,
+        language: rcField("#rcLanguage") || null,
+      };
+    if (merge && !body.target_id) {
+      rcError.textContent = "Sélectionnez le dossier patient existant.";
+      return;
+    }
+    try {
+      await request(`/patients/${reconcileId}/reconcile`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      reconcileDialog.close();
+      showMessage(merge ? "Patient lié au dossier existant." : "Patient intégré à la base patient.");
+      await loadReferenceData();
+      await load();
+    } catch (error) {
+      rcError.textContent = error.message;
+    }
   });
 
   // Durée de la prestation : plage de la salle (et du médecin) à l'heure choisie, sinon type, sinon durée précédente.
@@ -1347,7 +1943,9 @@
       const types = await request("/appointment-types");
       const type = types.find((entry) => entry.id === document.querySelector("#appointmentType").value);
       const start = new Date(document.querySelector("#startsAt").value);
-      if (type?.duration_minutes && !Number.isNaN(start.getTime())) {
+      if (type && !type.duration_minutes && !Number.isNaN(start.getTime())) {
+        await adaptDuration();
+      } else if (type?.duration_minutes && !Number.isNaN(start.getTime())) {
         document.querySelector("#endsAt").value = toLocalInput(
           new Date(start.getTime() + type.duration_minutes * 60_000),
         );
@@ -1356,6 +1954,21 @@
       /* la durée reste modifiable manuellement */
     }
   });
+
+  // En modification, le choix est toujours enregistré ; en création, seulement s'il diffère de la salle.
+  function showDoctorChoice() {
+    const checked = document.querySelector("#showDoctor").checked;
+    if (editingId) return checked;
+    const room = rooms.find((item) => item.id === document.querySelector("#appointmentRoom").value);
+    return checked === Boolean(room?.show_doctor) ? null : checked;
+  }
+
+  function showStatusChoice() {
+    const checked = document.querySelector("#showStatus").checked;
+    if (editingId) return checked;
+    const room = rooms.find((item) => item.id === document.querySelector("#appointmentRoom").value);
+    return checked === Boolean(room?.show_status) ? null : checked;
+  }
 
   document.querySelector("#appointmentForm").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -1371,6 +1984,8 @@
           ends_at: new Date(value("#endsAt")).toISOString(),
           notes: value("#notes").trim() || null,
           phone: editingId ? currentEvent?.phone || null : null,
+          show_doctor: showDoctorChoice(),
+          show_status: showStatusChoice(),
       });
       await request(editingId ? `/appointments/${editingId}` : "/appointments", {
         method: editingId ? "PUT" : "POST",
@@ -1628,8 +2243,13 @@
       info.append(
         el("strong", "", `${item.patient_name} (n° ${item.patient_id})`),
         el("span", "", `${start.toLocaleDateString("fr-BE", { weekday: "long", day: "numeric", month: "long", year: "numeric" })} · ${formatTime(start)}–${formatTime(end)}`),
-        el("span", "", [item.appointment_type, item.room, item.doctor, STATE_LABELS[item.state] || item.state].filter(Boolean).join(" · ")),
+        el("span", "", [item.appointment_type, item.room, item.doctor, statusLabel(item.state)].filter(Boolean).join(" · ")),
       );
+      if (item.patient_temporary) {
+        const title = info.firstElementChild;
+        title.classList.add("temp-title");
+        title.replaceChildren(el("span", "temp-name", title.textContent), tempChip());
+      }
       if (item.notes?.trim()) info.append(el("span", "patient-appointment-note", `💬 ${item.notes.trim()}`));
       const go = el("button", "secondary", "Afficher dans l’agenda");
       go.type = "button";
