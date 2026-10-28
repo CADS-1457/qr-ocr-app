@@ -1,0 +1,14 @@
+# Checklist de recette V3
+- [ ] restauration de sauvegarde V2 testée
+- [ ] migrations SQL appliquées sans erreur
+- [ ] volumes de chaque entité rapprochés
+- [ ] rejets examinés et justifiés
+- [ ] recherche patient par nom/date de naissance
+- [ ] recherche par GSM partagé retourne toutes les personnes concernées
+- [ ] aucune fusion automatique sur GSM/e-mail/adresse
+- [ ] foyer et relations validés manuellement
+- [ ] rendez-vous groupés, dossiers séparés
+- [ ] permissions inter-établissements testées
+- [ ] audit lecture/modification/export testé
+- [ ] stock et documents rapprochés
+- [ ] rollback testé

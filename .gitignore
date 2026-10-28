@@ -13,43 +13,47 @@ __pycache__/
 *.pyo
 venv/
 .venv/
-backe*d/venv/
+backend/venv/
 
 # VS Code / IDE
 .vscode/
-*idea/
+.idea/
 
 # OS
 .DS_Store
 Thumbs.db
 
-#*Logs / runtime
+# Logs / runtime
 *.log
 logs/
 tmp/
-te*p/
+temp/
 
 # Local databases / backups
-*.*b
+*.db
 *.sqlite
 *.sqlite3
 *.dump
-*.back*p
+*.backup
 
-# Certificates and private keys*certbot/
+# Certificates and private keys
+certbot/
 *.pem
 *.key
 *.pfx
 *.p12
+*.crt
+*.cer
 
-* PostgreSQL local persistence
-post*res-data/
+# PostgreSQL local persistence
+postgres-data/
 pgdata/
 
-# Runtime files*uploads/
+# Runtime files
+uploads/
 output/
 outputs/
 
-# Integ*ation packages already merged into*main project
-qr-ocr-agenda-stock-a*don/
-qr-ocr-agenda-stock-addon-v2/*
+# Integration packages already merged into main project
+qr-ocr-agenda-stock-addon/
+qr-ocr-agenda-stock-addon-v2/

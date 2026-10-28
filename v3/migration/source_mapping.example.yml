@@ -1,0 +1,33 @@
+# Adapter les noms de tables et colonnes à la V2 réelle.
+entities:
+  patients:
+    source_table: patients
+    id: id
+    fields:
+      first_name: first_name
+      last_name: last_name
+      birth_date: birth_date
+      national_number: national_number
+      mobile: mobile
+      email: email
+  appointments:
+    source_table: appointments
+    id: id
+    foreign_keys:
+      patient_id: patients
+      provider_id: providers
+  stock_movements:
+    source_table: stock_movements
+    id: id
+migration_order:
+  - organizations
+  - facilities
+  - users
+  - patients
+  - patient_contacts
+  - households
+  - providers
+  - appointments
+  - encounters
+  - inventory
+  - documents
