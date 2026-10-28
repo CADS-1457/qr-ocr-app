@@ -12,7 +12,9 @@
     h1{margin:0 0 6px;color:var(--primary);font-size:28px}h2{margin:0 0 12px;color:var(--primary)}.muted{color:var(--muted)}
     .header,.actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.header{justify-content:space-between}
     .btn{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:10px 14px;border:0;border-radius:10px;background:var(--primary);color:#fff;font-weight:700;text-decoration:none;cursor:pointer}
-    .btn:hover{background:var(--primary2)}.btn.secondary{background:#475569}.btn.light{background:#fff;color:var(--text);border:1px solid var(--border)}.btn.danger{background:var(--danger)}.btn.small{min-height:34px;padding:7px 10px;font-size:14px}.btn:disabled{opacity:.55;cursor:not-allowed}
+    .btn:hover{background:var(--primary2)}.btn.secondary{background:#475569}.btn.light{background:#fff;color:var(--text);border:1px solid var(--border)}.btn.danger{background:var(--danger)}.btn.small{min-height:34px;padding:7px 10px;font-size:14px}
+    .icon-btn{display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border:1px solid var(--border);border-radius:10px;background:#fff;color:var(--primary);cursor:pointer}
+    .icon-btn:hover{background:#eff6ff;border-color:#93c5fd}.icon-btn.on{color:#15803d}.icon-btn.off{color:#94a3b8}.icon-btn.danger{color:var(--danger)}.icon-btn.danger:hover{background:#fef2f2;border-color:#fca5a5}.icon-btn:disabled{opacity:.4;cursor:not-allowed}.btn:disabled{opacity:.55;cursor:not-allowed}
     .admin-login{display:grid;grid-template-columns:1fr 1fr auto auto;gap:10px;align-items:end;margin-top:16px}.admin-login input{width:100%;min-height:42px;padding:10px;border:1px solid #cbd5e1;border-radius:10px}
     .filters{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:12px;align-items:end}.field label{display:block;margin-bottom:6px;font-weight:700;font-size:14px}.field input,.field select{width:100%;min-height:44px;padding:10px;border:1px solid #cbd5e1;border-radius:10px;background:#fff}
     .status{display:none;margin-top:14px;padding:12px;border-radius:10px}.status.info{display:block;background:#dbeafe;color:#1e40af}.status.success{display:block;background:#dcfce7;color:#166534}.status.error{display:block;background:#fee2e2;color:#991b1b}
@@ -23,6 +25,7 @@
   </style>
   <link rel="stylesheet" href="app-shell.css">
   <script src="app-navigation.js" defer></script>
+  <script src="refresh-button.js" defer></script>
 </head>
 <body data-auth-required="true" data-auth-roles="admin,superadmin">
 <div class="container">
@@ -49,6 +52,7 @@
         <div class="field"><label for="userPassword">Mot de passe</label><input id="userPassword" type="password" minlength="12" autocomplete="new-password" placeholder="12 caractères minimum."></div>
         <div class="field" id="userAgendaField" hidden><label for="userAgenda">Module Agenda (SuperAdmin)</label><select id="userAgenda"><option value="false">Non activé</option><option value="true">Activé</option></select></div>
         <div class="field"><label for="userRole">Rôle</label><select id="userRole"><option value="user">Utilisateur — consulter et créer</option><option value="admin">Administrateur — tous les droits</option></select></div>
+        <div class="field"><label for="userDoctor">Médecin associé (droits statistiques)</label><select id="userDoctor"><option value="">Aucun</option></select></div>
         <div id="userActiveField" class="field" hidden><label for="userActive">État du compte</label><select id="userActive"><option value="true">Actif</option><option value="false">Désactivé</option></select></div>
       </div>
       <div class="actions" style="margin-top:12px"><button id="saveUser" class="btn" type="submit">Créer l’utilisateur</button><button id="cancelUserEdit" class="btn light" type="button" hidden>Annuler la modification</button><button id="refreshUsers" class="btn secondary" type="button">Actualiser</button></div>
@@ -117,7 +121,15 @@ async function loadUsers() {
   if (!isAdmin()) return;
   $('userList').textContent = 'Chargement des utilisateurs...';
   try {
-    const users = await request(`${API_BASE}/api/admin/users`);
+    const [users, doctorData] = await Promise.all([
+      request(`${API_BASE}/api/admin/users`),
+      request(`${API_BASE}/api/admin/doctors`).catch(() => ({ doctors: [] }))
+    ]);
+    const doctorsById = new Map(doctorData.doctors.map(d => [d.id, `${d.nom} ${d.prenom}`.trim()]));
+    const selected = $('userDoctor').value;
+    $('userDoctor').replaceChildren(new Option('Aucun', ''));
+    doctorData.doctors.forEach(d => $('userDoctor').add(new Option(`${d.nom} ${d.prenom} (${d.inami6})`, d.id)));
+    $('userDoctor').value = selected;
     $('userList').replaceChildren();
     users.forEach(user => {
       const item = document.createElement('article');
@@ -135,15 +147,21 @@ async function loadUsers() {
       agenda.className = `badge${user.agenda_enabled ? '' : ' off'}`;
       agenda.textContent = user.agenda_enabled ? 'Agenda' : 'Sans agenda';
       meta.append(name, role, state, agenda);
+      if (user.doctor_id && doctorsById.has(user.doctor_id)) {
+        const doctor = document.createElement('span');
+        doctor.className = 'badge';
+        doctor.textContent = `Dr ${doctorsById.get(user.doctor_id)}`;
+        meta.append(doctor);
+      }
       const actions = document.createElement('div');
       actions.className = 'actions';
-      const edit = button('Modifier', 'btn secondary small', () => editUser(user));
+      const edit = iconButton('Modifier', ICONS.edit, '', () => editUser(user));
       if (currentUser?.role === 'superadmin') {
-        actions.append(button(user.agenda_enabled ? 'Retirer l’agenda' : 'Activer l’agenda', 'btn light small',
+        actions.append(iconButton(user.agenda_enabled ? 'Retirer l’agenda' : 'Activer l’agenda', ICONS.agenda, user.agenda_enabled ? 'on' : 'off',
           () => updateUser(user.id, { agenda_enabled: !user.agenda_enabled })));
       }
-      const toggle = button(user.active ? 'Désactiver' : 'Activer', 'btn light small', () => updateUser(user.id, { active: !user.active }));
-      const remove = button('Supprimer', 'btn danger small', () => deleteUser(user));
+      const toggle = iconButton(user.active ? 'Désactiver le compte' : 'Activer le compte', ICONS.power, user.active ? 'on' : 'off', () => updateUser(user.id, { active: !user.active }));
+      const remove = iconButton('Supprimer', ICONS.trash, 'danger', () => deleteUser(user));
       remove.disabled = user.id === currentUser.id;
       actions.append(edit, toggle, remove);
       item.append(meta, actions);
@@ -153,6 +171,24 @@ async function loadUsers() {
   } catch (error) {
     $('userList').textContent = `Impossible de charger les utilisateurs : ${error.message}`;
   }
+}
+
+const ICONS = {
+  edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
+  trash: '<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 10v6M14 10v6"/>',
+  power: '<path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/>',
+  agenda: '<rect x="3" y="4" width="18" height="17" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>'
+};
+
+function iconButton(label, path, state, onclick) {
+  const element = document.createElement('button');
+  element.type = 'button';
+  element.className = `icon-btn ${state}`.trim();
+  element.title = label;
+  element.setAttribute('aria-label', label);
+  element.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`;
+  element.onclick = onclick;
+  return element;
 }
 
 function button(label, className, onclick) {
@@ -169,6 +205,7 @@ function resetUserForm() {
   $('userId').value = '';
   $('userRole').value = 'user';
   $('userAgenda').value = 'false';
+  $('userDoctor').value = '';
   $('userActive').value = 'true';
   $('userActiveField').hidden = true;
   $('userPassword').required = true;
@@ -186,6 +223,7 @@ function editUser(user) {
   $('userRole').value = user.role;
   $('userAgenda').value = String(Boolean(user.agenda_enabled));
   $('userActive').value = String(user.active);
+  $('userDoctor').value = user.doctor_id ? String(user.doctor_id) : '';
   $('userActiveField').hidden = false;
   $('saveUser').textContent = 'Enregistrer les changements';
   $('cancelUserEdit').hidden = false;
@@ -216,6 +254,7 @@ async function saveUser(event) {
   event.preventDefault();
   const userId = $('userId').value;
   const payload = { username: $('userName').value.trim(), role: $('userRole').value };
+  payload.doctor_id = $('userDoctor').value ? Number($('userDoctor').value) : null;
   if (userId) payload.active = $('userActive').value === 'true';
   if (currentUser?.role === 'superadmin') payload.agenda_enabled = $('userAgenda').value === 'true';
   if ($('userPassword').value) payload.password = $('userPassword').value;

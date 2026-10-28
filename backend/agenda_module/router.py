@@ -2070,6 +2070,10 @@ def set_status(
         )
         apply_state_to_planned_stock(db, appointment_id, payload.new_state, uid)
         db.commit()
+        if str(appointment["state"]) == "TO_CONFIRM" and payload.new_state != "TO_CONFIRM":
+            from .portal import notify_status_change
+
+            notify_status_change(appointment_id, "TO_CONFIRM", payload.new_state)
         return {"ok": True}
     except Exception:
         db.rollback()

@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f4c81">
+  <title>Statistiques des délivrances</title>
+  <style>
+    :root{--primary:#0f4c81;--primary-dark:#0a365c;--bg:#eef2f7;--text:#1f2937;--muted:#64748b;--border:#dbe3ec}
+    *{box-sizing:border-box}body{margin:0;padding:16px;background:var(--bg);color:var(--text);font-family:Arial,sans-serif}
+    .container{max-width:1200px;margin:auto}.card{margin-bottom:16px;padding:20px;background:#fff;border-radius:16px;box-shadow:0 6px 22px rgba(15,76,129,.08)}
+    h1{margin:0 0 6px;color:var(--primary);font-size:28px}h2{margin:0 0 12px}.muted{color:var(--muted)}
+    .header,.toolbar,.auth-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.header,.toolbar,.auth-bar{justify-content:space-between}
+    .btn{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:10px 14px;border:0;border-radius:10px;background:var(--primary);color:#fff;font-weight:700;text-decoration:none;cursor:pointer}
+    .btn:hover{background:var(--primary-dark)}.btn.light{background:#fff;color:var(--text);border:1px solid var(--border)}
+    .login-grid{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end;margin-top:16px}
+    .field{min-width:0}.field label{display:block;margin:0 0 6px;font-size:14px;font-weight:700}
+    .field input,.field select{width:100%;min-height:44px;padding:10px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;font:inherit}
+    .filters{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;align-items:end}
+    .tool-icons{display:flex;gap:8px}.tool-btn{display:inline-flex;align-items:center;justify-content:center;width:46px;height:46px;border:1px solid var(--border);border-radius:12px;background:#fff;color:var(--primary);cursor:pointer}
+    .tool-btn:hover{background:#eff6ff;border-color:#93c5fd}.tool-btn:focus-visible{outline:3px solid #93c5fd;outline-offset:2px}
+    .kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin:18px 0}
+    .kpi{padding:14px;border:1px solid var(--border);border-radius:12px;background:#f8fafc}.kpi strong{display:block;font-size:26px;color:var(--primary)}.kpi span{color:var(--muted);font-size:13px}
+    .status{display:none;margin-top:14px;padding:12px;border-radius:10px;line-height:1.4}.status.info{display:block;background:#dbeafe;color:#1e40af}.status.success{display:block;background:#dcfce7;color:#166534}.status.error{display:block;background:#fee2e2;color:#991b1b}
+    .table-wrap{overflow:auto;border:1px solid var(--border);border-radius:12px}table{width:100%;min-width:640px;border-collapse:collapse}th,td{padding:11px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:middle}th{background:var(--primary);color:#fff;white-space:nowrap}
+    td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}.group-row td{background:#eff6ff;font-weight:700;color:var(--primary)}.sub td:first-child{padding-left:30px}
+    .bar{display:inline-block;height:8px;border-radius:4px;background:#93c5fd;vertical-align:middle;margin-left:8px}
+    .occ-bar{display:inline-block;width:120px;height:10px;border-radius:5px;background:#e2e8f0;vertical-align:middle;overflow:hidden}.occ-bar i{display:block;height:100%;background:#0f4c81}
+    .swatch{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:8px;vertical-align:-1px}
+    .heat{border-collapse:separate;border-spacing:2px;min-width:0;width:auto}.heat th{background:none;color:var(--muted);font-size:12px;padding:2px 6px;font-weight:600}.heat td{width:34px;height:28px;padding:0;border:0;border-radius:4px;text-align:center;font-size:11px;color:#0f172a}
+    .kpi.chart{grid-column:span 2;display:flex;flex-direction:column;gap:6px}.kpi.chart .chart-title{font-size:13px;color:var(--muted)}
+    .spark{display:block;width:100%;height:64px}.spark .bar-m{transition:opacity .15s}.spark .bar-m:hover{opacity:.75}
+    .spark text{font-size:9px;fill:var(--muted);text-anchor:middle}.spark .none{font-size:11px}
+    .kpis.three{grid-template-columns:repeat(3,minmax(0,1fr))}
+    .confirm-dialog{width:min(460px,calc(100% - 32px));padding:22px;border:0;border-radius:16px;background:#fff;color:var(--text);box-shadow:0 18px 50px rgba(15,23,42,.25)}
+    .confirm-dialog::backdrop{background:rgba(15,23,42,.55)}
+    .confirm-dialog h2{margin:0 0 10px;color:var(--primary);font-size:20px}.confirm-dialog p{margin:0;line-height:1.5;white-space:pre-line}
+    .confirm-dialog .actions{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
+    .val-ok{color:#166534;font-weight:700}.empty{text-align:center;padding:30px;color:var(--muted)}[hidden]{display:none!important}
+    .no-amounts table th:nth-child(5),.no-amounts table td:nth-child(5),.no-billing table th:nth-child(6),.no-billing table td:nth-child(6),
+    .no-amounts .kpi:has(#kTotal),.no-amounts .kpi:has(#chartAmount),.no-amounts #noPrice,.no-billing #valInfo,.no-billing .field:has(#statut){display:none!important}
+    @media(max-width:760px){.filters{grid-template-columns:1fr 1fr}.kpis{grid-template-columns:1fr 1fr}.kpi.chart{grid-column:span 2}}
+    @media(max-width:600px){body{padding:10px}.card{padding:15px}.login-grid,.filters{grid-template-columns:1fr}.login-grid .btn{width:100%}}
+  </style>
+  <link rel="stylesheet" href="app-shell.css">
+  <script src="app-navigation.js" defer></script>
+</head>
+<body data-auth-required="true">
+<main class="container">
+  <section class="card">
+    <div class="header">
+      <div><h1>Statistiques</h1><div class="muted">Produits délivrés par prestataire, avec filtres et extraction.</div></div>
+    </div>
+    <div id="authBar" class="auth-bar" hidden>
+      <strong id="signedInAs"></strong>
+      <button id="logoutButton" class="btn light" type="button">Déconnexion</button>
+    </div>
+    <form id="loginForm" class="login-grid">
+      <div class="field"><label for="loginUsername">Utilisateur</label><input id="loginUsername" autocomplete="username" required></div>
+      <div class="field"><label for="loginPassword">Mot de passe</label><input id="loginPassword" type="password" autocomplete="current-password" required></div>
+      <button id="loginButton" class="btn" type="submit">Connexion</button>
+    </form>
+    <div id="authStatus" class="status" aria-live="polite"></div>
+  </section>
+
+  <section id="statsCard" class="card" hidden>
+    <div class="toolbar">
+      <h2>Délivrances</h2>
+      <div class="tool-icons" role="group" aria-label="Actions">
+        <button id="exportSummary" class="tool-btn" type="button" title="Exporter la synthèse affichée (CSV)" aria-label="Exporter la synthèse affichée (CSV)">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+        </button>
+        <button id="exportDetail" class="tool-btn" type="button" title="Exporter le détail de chaque délivrance (CSV)" aria-label="Exporter le détail de chaque délivrance (CSV)">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>
+        </button>
+        <button id="btnRecalc" class="tool-btn" type="button" title="Recalculer les montants des délivrances non validées avec les prix en vigueur" aria-label="Recalculer les montants" hidden>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M8 7h8M9 12h.01M12 12h.01M15 12h.01M9 16h.01M12 16h.01M15 16h.01"/></svg>
+        </button>
+        <button id="btnValidate" class="tool-btn" type="button" title="Valider l’extraction : fige le prix des délivrances affichées" aria-label="Valider l’extraction" hidden>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="m8 12.5 3 3 5-6"/></svg>
+        </button>
+        <button id="btnReopen" class="tool-btn" type="button" title="Rouvrir les délivrances validées affichées" aria-label="Rouvrir les délivrances validées" hidden>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 7.5-2"/></svg>
+        </button>
+        <button id="btnBill" class="tool-btn" type="button" title="Facturer : verrouille définitivement les délivrances validées affichées" aria-label="Facturer les délivrances validées" hidden>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6"/></svg>
+        </button>
+        <button id="resetFilters" class="tool-btn" type="button" title="Effacer les filtres" aria-label="Effacer les filtres">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="filters" style="margin-top:14px">
+      <div class="field"><label for="groupBy">Regrouper par</label>
+        <select id="groupBy">
+          <option value="prestataire_produit">Prestataire puis produit</option>
+          <option value="prestataire">Prestataire</option>
+          <option value="produit">Produit</option>
+          <option value="salle">Note</option>
+          <option value="mois">Mois</option>
+        </select></div>
+      <div class="field"><label for="dateFrom">Du</label><input id="dateFrom" type="date"></div>
+      <div class="field"><label for="dateTo">Au</label><input id="dateTo" type="date"></div>
+      <div class="field"><label for="doctor">Prestataire</label><select id="doctor"><option value="">Tous</option></select></div>
+      <div class="field"><label for="product">Produit</label><input id="product" type="search" placeholder="Libellé du produit"></div>
+      <div class="field"><label for="statut">État</label><select id="statut"><option value="">Toutes</option><option value="pending">À valider</option><option value="validated">Validées (modifiables)</option><option value="billed">Facturées (verrouillées)</option></select></div>
+      <div class="field"><label for="room">Note</label><input id="room" type="search" placeholder="Texte de la note"></div>
+    </div>
+    <div class="kpis" aria-live="polite">
+      <div class="kpi"><strong id="kQty">0</strong><span>Unités délivrées</span></div>
+      <div class="kpi"><strong id="kDisp">0</strong><span>Délivrances</span></div>
+      <div class="kpi"><strong id="kDoc">0</strong><span>Prestataires</span></div>
+      <div class="kpi"><strong id="kProd">0</strong><span>Produits</span></div>
+      <div class="kpi"><strong id="kPat">0</strong><span>Patients</span></div>
+      <div class="kpi"><strong id="kTotal">0,00 €</strong><span>Total</span></div>
+      <div class="kpi chart"><div class="chart-title">Montant par mois (€)</div><svg id="chartAmount" class="spark" role="img" aria-label="Évolution mensuelle du montant"></svg></div>
+      <div class="kpi chart"><div class="chart-title">Unités délivrées par mois</div><svg id="chartQty" class="spark" role="img" aria-label="Évolution mensuelle des unités délivrées"></svg></div>
+    </div>
+    <div id="statsStatus" class="status" aria-live="polite"></div>
+    <div id="noPrice" class="status info" hidden></div>
+    <div id="valInfo" class="muted" style="margin:6px 0 12px" aria-live="polite"></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th id="thGroup">Prestataire</th><th class="num">Unités</th><th class="num">Délivrances</th><th class="num">Patients</th><th class="num">Montant</th><th>État</th><th>Dernière délivrance</th></tr></thead>
+        <tbody id="statsRows"></tbody>
+      </table>
+      <div id="emptyState" class="empty" hidden>Aucune délivrance ne correspond à ces critères.</div>
+    </div>
+  </section>
+</main>
+<dialog id="askDialog" class="confirm-dialog" aria-labelledby="askTitle" aria-describedby="askMessage">
+  <h2 id="askTitle">Confirmation</h2>
+  <p id="askMessage"></p>
+  <div class="actions">
+    <button id="askCancel" class="btn light" type="button">Annuler</button>
+    <button id="askOk" class="btn" type="button">Confirmer</button>
+  </div>
+</dialog>
+<script src="auth.js"></script>
+<script>
+'use strict';
+
+const API = `${window.AppAuth.API_BASE}/api`;
+const $ = (id) => document.getElementById(id);
+let currentUser = window.AppAuth.user();
+let current = null;
+let timer = null;
+const HEADINGS = {
+  prestataire_produit: 'Prestataire / produit',
+  prestataire: 'Prestataire',
+  produit: 'Produit',
+  salle: 'Note',
+  mois: 'Mois'
+};
+
+function showStatus(element, message, type = 'info') {
+  element.textContent = message;
+  element.className = `status ${type}`;
+}
+
+function updateAuthState() {
+  const signedIn = Boolean(currentUser);
+  $('loginForm').hidden = signedIn;
+  $('authBar').hidden = !signedIn;
+  $('statsCard').hidden = !signedIn;
+  $('btnValidate').hidden = !isAdmin();
+  $('btnReopen').hidden = !isAdmin();
+  $('btnBill').hidden = !isAdmin();
+  $('btnRecalc').hidden = !isAdmin();
+  $('signedInAs').textContent = signedIn ? `Connecté : ${currentUser.username}` : '';
+}
+
+const fmtDate = (value) => (value ? new Date(value).toLocaleString('fr-BE') : '—');
+
+function params(withGroup = true) {
+  const query = new URLSearchParams();
+  if (withGroup) query.set('group_by', $('groupBy').value);
+  if ($('dateFrom').value) query.set('date_from', $('dateFrom').value);
+  if ($('dateTo').value) query.set('date_to', $('dateTo').value);
+  if ($('doctor').value) query.set('medecin', $('doctor').value);
+  if ($('product').value.trim()) query.set('produit', $('product').value.trim());
+  if ($('room').value.trim()) query.set('salle', $('room').value.trim());
+  if ($('statut').value) query.set('statut', $('statut').value);
+  return query;
+}
+
+async function api(path, query) {
+  const response = await fetch(`${API}${path}?${query}`, { headers: window.AppAuth.headers() });
+  if (response.status === 401) {
+    logout('Session expirée. Connectez-vous à nouveau.');
+    throw new Error('Session expirée.');
+  }
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(typeof body.detail === 'string' ? body.detail : `HTTP ${response.status}`);
+  return body;
+}
+
+function cell(text, className) {
+  const td = document.createElement('td');
+  td.textContent = text;
+  if (className) td.className = className;
+  return td;
+}
+
+const eur = (v) => Number(v || 0).toLocaleString('fr-BE', { style: 'currency', currency: 'EUR' });
+
+const STATE_ICONS = {
+  pending: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2.500" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+  ok: '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="#16a34a"/><path d="m7 12.5 3.2 3.2L17 8.800" fill="none" stroke="#fff" stroke-width="2.600" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  billed: '<svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="11" fill="#16a34a"/><text x="12" y="17" text-anchor="middle" font-family="Arial,sans-serif" font-size="14" font-weight="700" fill="#fff">€</text></svg>'
+};
+
+function stateCell(group) {
+  const td = document.createElement('td');
+  const part = (icon, label, count) => {
+    const span = document.createElement('span');
+    span.style.cssText = 'display:inline-flex;align-items:center;gap:4px;margin-right:10px;white-space:nowrap';
+    span.innerHTML = icon;
+    span.title = count == null ? label : `${count} ${label.toLowerCase()}`;
+    span.setAttribute('aria-label', span.title);
+    if (count != null) span.append(document.createTextNode(String(count)));
+    td.append(span);
+  };
+  const billed = group.facturees || 0;
+  const validated = (group.validees || 0) - billed;
+  const pending = group.delivrances - (group.validees || 0);
+  const single = (n) => n === group.delivrances;
+  if (billed) part(STATE_ICONS.billed, 'Facturé', single(billed) ? null : billed);
+  if (validated) part(STATE_ICONS.ok, 'Validé', single(validated) ? null : validated);
+  if (pending) part(STATE_ICONS.pending, 'À valider', single(pending) ? null : pending);
+  return td;
+}
+
+const PALETTE = ['#3b82f6', '#06b6d4', '#10b981', '#eab308', '#f97316', '#ec4899', '#8b5cf6'];
+const MONTHS = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', 'août', 'sept.', 'oct.', 'nov.', 'déc.'];
+
+function drawChart(svg, rows, key, format) {
+  const W = 300, H = 64, base = 50;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.setAttribute('preserveAspectRatio', 'none');
+  const ns = 'http://www.w3.org/2000/svg';
+  svg.replaceChildren();
+  const add = (name, attrs, text) => {
+    const el = document.createElementNS(ns, name);
+    Object.entries(attrs).forEach(([k, v]) => el.setAttribute(k, v));
+    if (text != null) el.textContent = text;
+    svg.append(el);
+    return el;
+  };
+  if (!rows.length) {
+    add('text', { x: W / 2, y: 32, class: 'none' }, 'Aucune donnée');
+    return;
+  }
+  const max = Math.max(...rows.map((r) => Number(r[key]) || 0), 1);
+  const slot = W / rows.length;
+  const width = Math.min(slot * 0.7, 28);
+  rows.forEach((row, i) => {
+    const value = Number(row[key]) || 0;
+    const height = Math.max(value > 0 ? 2 : 0, (value / max) * (base - 6));
+    const x = i * slot + (slot - width) / 2;
+    const [year, month] = row.mois.split('-');
+    const label = `${MONTHS[Number(month) - 1]} ${year} : ${format(value)}`;
+    const bar = add('rect', { x, y: base - height, width, height, rx: 2, class: 'bar-m', fill: PALETTE[i % PALETTE.length] });
+    const title = document.createElementNS(ns, 'title');
+    title.textContent = label;
+    bar.append(title);
+    if (rows.length <= 12) add('text', { x: x + width / 2, y: H - 2 }, MONTHS[Number(month) - 1].replace('.', ''));
+  });
+}
+
+function render() {
+  const { groups, totals, doctors, group_by: groupBy } = current;
+  $('kQty').textContent = totals.quantite;
+  $('kDisp').textContent = totals.delivrances;
+  $('kDoc').textContent = totals.prestataires;
+  $('kProd').textContent = totals.produits;
+  $('kPat').textContent = totals.patients;
+  $('kTotal').textContent = eur(totals.total);
+  const monthly = current.monthly || [];
+  drawChart($('chartAmount'), monthly, 'total', eur);
+  drawChart($('chartQty'), monthly, 'quantite', (v) => `${v} unité(s)`);
+  $('valInfo').textContent = `${totals.facturees} facturée(s), ${totals.validees - totals.facturees} validée(s) modifiable(s), ${totals.delivrances - totals.validees} à valider.`;
+  $('btnValidate').disabled = totals.delivrances === totals.validees;
+  $('btnReopen').disabled = totals.validees - totals.facturees === 0;
+  $('btnBill').disabled = totals.validees - totals.facturees === 0;
+  $('btnRecalc').disabled = totals.delivrances === totals.validees;
+  $('noPrice').hidden = !totals.sans_prix;
+  $('noPrice').textContent = `${totals.sans_prix} délivrance(s) sans prix : non comptée(s) dans le total.`;
+  $('thGroup').textContent = HEADINGS[groupBy];
+
+  const selected = $('doctor').value;
+  const known = new Set([...$('doctor').options].map((o) => o.value));
+  doctors.filter((name) => !known.has(name)).forEach((name) => $('doctor').add(new Option(name, name)));
+  if (!known.has('__none__')) $('doctor').add(new Option('(Non renseigné)', '__none__'));
+  $('doctor').value = selected;
+
+  const body = $('statsRows');
+  body.replaceChildren();
+  $('emptyState').hidden = groups.length > 0;
+  const max = Math.max(1, ...groups.map((g) => g.quantite));
+  let lastGroup = null;
+  for (const group of groups) {
+    if (groupBy === 'prestataire_produit') {
+      if (group.groupe !== lastGroup) {
+        lastGroup = group.groupe;
+        const subtotal = groups.filter((g) => g.groupe === group.groupe);
+        const tr = document.createElement('tr');
+        tr.className = 'group-row';
+        tr.append(
+          cell(group.groupe),
+          cell(subtotal.reduce((s, g) => s + g.quantite, 0), 'num'),
+          cell(subtotal.reduce((s, g) => s + g.delivrances, 0), 'num'),
+          cell('', 'num'),
+          cell(eur(subtotal.reduce((a, g) => a + Number(g.total || 0), 0)), 'num'),
+          stateCell({ facturees: subtotal.reduce((a, g) => a + g.facturees, 0), validees: subtotal.reduce((a, g) => a + g.validees, 0), delivrances: subtotal.reduce((a, g) => a + g.delivrances, 0) }),
+          cell('')
+        );
+        body.append(tr);
+      }
+      const tr = document.createElement('tr');
+      tr.className = 'sub';
+      tr.append(cell(group.sous_groupe), cell(group.quantite, 'num'), cell(group.delivrances, 'num'),
+        cell(group.patients, 'num'), cell(eur(group.total), 'num'), stateCell(group), cell(fmtDate(group.derniere)));
+      body.append(tr);
+    } else {
+      const tr = document.createElement('tr');
+      const first = cell(group.groupe);
+      const bar = document.createElement('span');
+      bar.className = 'bar';
+      bar.style.width = `${Math.max(4, Math.round((group.quantite / max) * 120))}px`;
+      first.append(bar);
+      tr.append(first, cell(group.quantite, 'num'), cell(group.delivrances, 'num'),
+        cell(group.patients, 'num'), cell(eur(group.total), 'num'), stateCell(group), cell(fmtDate(group.derniere)));
+      body.append(tr);
+    }
+  }
+}
+
+async function applyRights() {
+  try {
+    const rights = await api('/stats/rights');
+    const restricted = Boolean(rights.restricted);
+    const table = document.querySelector('table');
+    table.classList.toggle('no-amounts', restricted && !rights.amounts);
+    table.classList.toggle('no-billing', restricted && !rights.billing);
+    document.body.classList.toggle('no-amounts', restricted && !rights.amounts);
+    document.body.classList.toggle('no-billing', restricted && !rights.billing);
+  } catch { /* le refus éventuel est signalé par le chargement */ }
+}
+
+async function load() {
+  if (!currentUser) return;
+  try {
+    await applyRights();
+    current = await api('/stats/dispensations', params());
+    render();
+    $('statsStatus').className = 'status';
+  } catch (error) {
+    showStatus($('statsStatus'), `Statistiques indisponibles : ${error.message}`, 'error');
+  }
+}
+
+function csvEscape(value) {
+  const text = value === null || value === undefined ? '' : String(value);
+  return /[";\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function download(name, lines) {
+  const blob = new Blob(['\uFEFF' + lines.map((line) => line.map(csvEscape).join(';')).join('\r\n')], { type: 'text/csv;charset=utf-8' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = `${name}-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+
+function exportSummary() {
+  if (!current) return;
+  const two = current.group_by === 'prestataire_produit';
+  const head = two ? ['Prestataire', 'Produit'] : [HEADINGS[current.group_by]];
+  const lines = [[...head, 'Unités', 'Délivrances', 'Patients', 'Montant (€)', 'Dernière délivrance']];
+  current.groups.forEach((g) => lines.push([
+    g.groupe, ...(two ? [g.sous_groupe] : []), g.quantite, g.delivrances, g.patients, Number(g.total || 0).toFixed(2).replace('.', ','), fmtDate(g.derniere)
+  ]));
+  download('statistiques-delivrances', lines);
+}
+
+async function exportDetail() {
+  try {
+    const rows = await api('/stats/dispensations/detail', params(false));
+    const lines = [['Date', 'Prestataire', 'Produit', 'Quantité', 'Prix unitaire (€)', 'Montant (€)', 'N° de série', 'Péremption', 'Note', 'Patient', 'Délivré par', 'Validé', 'Facturé']];
+    rows.forEach((r) => lines.push([fmtDate(r.dispensed_at), r.prestataire, r.denomination, r.quantity,
+      r.prix_unitaire == null ? '' : Number(r.prix_unitaire).toFixed(2).replace('.', ','),
+      r.montant == null ? '' : Number(r.montant).toFixed(2).replace('.', ','),
+      r.numero_serie || '', r.expiration_date || '', r.salle, r.patient, r.dispensed_by, r.valide ? 'Oui' : 'Non', r.facture ? 'Oui' : 'Non']));
+    download('delivrances-detail', lines);
+    await offerValidation(rows.filter((r) => !r.valide).length);
+  } catch (error) {
+    showStatus($('statsStatus'), `Export impossible : ${error.message}`, 'error');
+  }
+}
+
+function askConfirm(message, title = 'Confirmation', okLabel = 'Confirmer') {
+  const dialog = $('askDialog');
+  $('askTitle').textContent = title;
+  $('askMessage').textContent = message;
+  $('askOk').textContent = okLabel;
+  return new Promise((resolve) => {
+    const finish = (value) => {
+      if (dialog.open) dialog.close();
+      resolve(value);
+    };
+    $('askCancel').onclick = () => finish(false);
+    $('askOk').onclick = () => finish(true);
+    dialog.addEventListener('cancel', () => resolve(false), { once: true });
+    dialog.showModal();
+    $('askOk').focus();
+  });
+}
+
+const isAdmin = () => ['admin', 'superadmin'].includes(currentUser?.role);
+
+function validationQuery() {
+  const query = params(false);
+  query.delete('statut');
+  return query;
+}
+
+async function postAction(path) {
+  const response = await fetch(`${API}${path}?${validationQuery()}`, { method: 'POST', headers: window.AppAuth.headers() });
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(typeof body.detail === 'string' ? body.detail : `HTTP ${response.status}`);
+  return body;
+}
+
+async function validateExtraction() {
+  try {
+    const result = await postAction('/stats/dispensations/validate');
+    let message = `${result.validees} délivrance(s) validée(s) : leur prix est figé.`;
+    if (result.sans_prix_ignorees) message += ` ${result.sans_prix_ignorees} sans prix ignorée(s).`;
+    showStatus($('statsStatus'), message, 'success');
+    await load();
+  } catch (error) {
+    showStatus($('statsStatus'), `Validation impossible : ${error.message}`, 'error');
+  }
+}
+
+async function offerValidation(pending) {
+  if (!isAdmin() || !pending) return;
+  if (await askConfirm(`Extraction terminée. Marquer les ${pending} délivrance(s) non validées comme validées ?\nLeur prix sera figé tant qu'elles ne sont pas rouvertes.`, 'Valider l’extraction', 'Valider')) {
+    await validateExtraction();
+  }
+}
+
+async function reopenExtraction() {
+  if (!(await askConfirm('Rouvrir les délivrances validées (non facturées) affichées ? Leur prix suivra de nouveau le tarif en vigueur.', 'Rouvrir', 'Rouvrir'))) return;
+  try {
+    const result = await postAction('/stats/dispensations/unvalidate');
+    showStatus($('statsStatus'), `${result.rouvertes} délivrance(s) rouverte(s).`, 'success');
+    await load();
+  } catch (error) {
+    showStatus($('statsStatus'), `Action impossible : ${error.message}`, 'error');
+  }
+}
+
+function logout(message = 'Session fermée.') {
+  window.AppAuth.logout();
+  currentUser = null;
+  updateAuthState();
+  showStatus($('authStatus'), message, 'info');
+}
+
+async function login(event) {
+  event.preventDefault();
+  $('loginButton').disabled = true;
+  try {
+    currentUser = await window.AppAuth.login($('loginUsername').value.trim(), $('loginPassword').value);
+    $('loginPassword').value = '';
+    updateAuthState();
+    showStatus($('authStatus'), 'Connexion réussie.', 'success');
+    await load();
+  } catch (error) {
+    showStatus($('authStatus'), `Connexion impossible : ${error.message}`, 'error');
+  } finally {
+    $('loginButton').disabled = false;
+  }
+}
+
+$('loginForm').addEventListener('submit', login);
+$('logoutButton').addEventListener('click', () => logout());
+['groupBy', 'dateFrom', 'dateTo', 'doctor', 'statut'].forEach((id) => $(id).addEventListener('change', load));
+['product', 'room'].forEach((id) => $(id).addEventListener('input', () => {
+  clearTimeout(timer);
+  timer = setTimeout(load, 300);
+}));
+$('resetFilters').addEventListener('click', () => {
+  ['dateFrom', 'dateTo', 'doctor', 'product', 'room', 'statut'].forEach((id) => { $(id).value = ''; });
+  load();
+});
+$('exportSummary').addEventListener('click', exportSummary);
+$('exportDetail').addEventListener('click', exportDetail);
+$('btnValidate').addEventListener('click', async () => {
+  if (await askConfirm('Valider les délivrances affichées ? Leur prix sera figé.', 'Valider', 'Valider')) validateExtraction();
+});
+$('btnReopen').addEventListener('click', reopenExtraction);
+$('btnBill').addEventListener('click', async () => {
+  if (!(await askConfirm('Facturer les délivrances validées affichées ?\nElles seront verrouillées définitivement : plus de réouverture ni de modification.', 'Facturer', 'Facturer'))) return;
+  try {
+    const r = await postAction('/stats/dispensations/bill');
+    let message = `${r.facturees} délivrance(s) facturée(s) et verrouillée(s).`;
+    if (r.non_validees_ignorees) message += ` ${r.non_validees_ignorees} non validée(s) ignorée(s).`;
+    showStatus($('statsStatus'), message, 'success');
+    await load();
+  } catch (error) {
+    showStatus($('statsStatus'), `Facturation impossible : ${error.message}`, 'error');
+  }
+});
+$('btnRecalc').addEventListener('click', async () => {
+  $('btnRecalc').disabled = true;
+  try {
+    const r = await postAction('/stats/dispensations/recalculate');
+    let message = `${r.recalculees} délivrance(s) non validée(s) recalculée(s) au tarif en vigueur.`;
+    if (r.sans_prix) message += ` ${r.sans_prix} sans prix.`;
+    if (r.figees) message += ` ${r.figees} validée(s) inchangée(s).`;
+    showStatus($('statsStatus'), message, 'success');
+    await load();
+  } catch (error) {
+    showStatus($('statsStatus'), `Recalcul impossible : ${error.message}`, 'error');
+  }
+});
+
+
+
+updateAuthState();
+if (currentUser) {
+  fetch(`${API}/auth/me`, { headers: window.AppAuth.headers() }).then((response) => {
+    if (response.status === 401) logout('Session expirée. Connectez-vous à nouveau.');
+    else load();
+  }).catch(() => load());
+} else {
+  showStatus($('authStatus'), 'Connectez-vous pour consulter les statistiques.', 'info');
+}
+</script>
+</body>
+</html>

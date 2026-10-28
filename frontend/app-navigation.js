@@ -6,7 +6,8 @@
       label: 'Agenda',
       links: [
         ['agenda-calendrier.html', 'Agenda'],
-        ['agenda.html', 'Agenda et parcours patient']
+        ['agenda.html', 'Agenda et parcours patient'],
+        ['reservation-en-ligne.html', 'Réservation en ligne']
       ]
     },
     {
@@ -34,10 +35,18 @@
       ]
     },
     {
+      label: 'Statistiques',
+      links: [
+        ['statistiques.html', 'Délivrances par prestataire'],
+        ['occupation-salles.html', 'Occupation des salles']
+      ]
+    },
+    {
       label: 'Administration',
       roles: ['admin', 'superadmin'],
       links: [
         ['utilisateurs.html', 'Gestion des utilisateurs'],
+        ['medecins.html', 'Médecins et droits'],
         ['superadmin.html', 'Journal SuperAdmin', ['superadmin']]
       ]
     }
@@ -72,7 +81,7 @@
   if (currentPage === 'index.html') homeLink.setAttribute('aria-current', 'page');
   navigation.append(homeLink);
 
-  const agendaPages = ['agenda.html', 'agenda-calendrier.html'];
+  const agendaPages = ['agenda.html', 'agenda-calendrier.html', 'occupation-salles.html', 'reservation-en-ligne.html'];
   // Sans connexion, le lien reste visible pour mener à l'écran de connexion.
   const showAgenda = !user || window.AppAuth?.canUseAgenda(user);
 

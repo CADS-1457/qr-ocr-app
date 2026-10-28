@@ -7,10 +7,10 @@ import os
 import re
 import secrets
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Literal, Optional
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from sqlalchemy import Column, LargeBinary, delete, func, inspect, or_, text, update
@@ -18,6 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Field, Session, SQLModel, create_engine, select
 
 from agenda_module.router import router as agenda_router
+from agenda_module.portal import admin as portal_admin_router, ensure_portal_schema, portal as portal_public_router
 from models.ocr_job import OcrJob  # noqa: F401 (enregistre la table dans SQLModel)
 from routes.ocr import register_ocr_routes
 MAX_IMAGE_SIZE = 10 * 1024 * 1024
@@ -90,6 +91,7 @@ class UserAccount(SQLModel, table=True):
     role: str = Field(default="user", max_length=20)
     active: bool = Field(default=True)
     agenda_enabled: bool = Field(default=False)
+    doctor_id: Optional[int] = Field(default=None)
     auth_version: int = Field(default=0)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -104,6 +106,7 @@ class UserCreate(SQLModel):
     password: str = Field(min_length=12, max_length=1024)
     role: Literal["admin", "user"] = "user"
     agenda_enabled: bool = False
+    doctor_id: Optional[int] = None
 
 
 class UserUpdate(SQLModel):
@@ -112,6 +115,7 @@ class UserUpdate(SQLModel):
     role: Optional[Literal["admin", "user"]] = None
     active: Optional[bool] = None
     agenda_enabled: Optional[bool] = None
+    doctor_id: Optional[int] = None
 
 
 class UserRead(SQLModel):
@@ -120,6 +124,7 @@ class UserRead(SQLModel):
     role: str
     active: bool
     agenda_enabled: bool = False
+    doctor_id: Optional[int] = None
     created_at: datetime
 
 
@@ -500,6 +505,48 @@ engine = create_engine(
 
 def create_db_and_tables():
     SQLModel.metadata.create_all(engine)
+    with engine.begin() as price_connection:
+        price_connection.exec_driver_sql(
+            "CREATE TABLE IF NOT EXISTS stock_prices("
+            "id SERIAL PRIMARY KEY, stock_item_id INTEGER NOT NULL REFERENCES stockitem(id) ON DELETE CASCADE, "
+            "price NUMERIC(12,2) NOT NULL CHECK(price>=0), valid_from DATE NOT NULL, valid_to DATE, "
+            "created_by VARCHAR(255), created_at TIMESTAMP NOT NULL DEFAULT now(), "
+            "CHECK(valid_to IS NULL OR valid_to>=valid_from))"
+        )
+        price_connection.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_stock_prices_item ON stock_prices(stock_item_id, valid_from)"
+        )
+    with engine.begin() as doctor_connection:
+        doctor_connection.exec_driver_sql(
+            "CREATE TABLE IF NOT EXISTS doctors("
+            "id SERIAL PRIMARY KEY, inami6 VARCHAR(6) NOT NULL UNIQUE, inami11 VARCHAR(11) NOT NULL UNIQUE, "
+            "nom VARCHAR(120) NOT NULL, prenom VARCHAR(120) NOT NULL, specialite VARCHAR(120), "
+            "email VARCHAR(255), tel VARCHAR(40), gsm VARCHAR(40), adresse VARCHAR(255), "
+            "code_postal VARCHAR(20), ville VARCHAR(120), active BOOLEAN NOT NULL DEFAULT TRUE, "
+            "resource_id UUID UNIQUE REFERENCES people_resources(id) ON DELETE SET NULL, "
+            "stats_access BOOLEAN NOT NULL DEFAULT FALSE, amounts_access BOOLEAN NOT NULL DEFAULT FALSE, "
+            "billing_access BOOLEAN NOT NULL DEFAULT FALSE, created_at TIMESTAMP NOT NULL DEFAULT now())"
+        )
+        doctor_connection.exec_driver_sql(
+            "CREATE TABLE IF NOT EXISTS doctor_groups("
+            "id SERIAL PRIMARY KEY, name VARCHAR(120) NOT NULL UNIQUE, description VARCHAR(255), "
+            "stats_access BOOLEAN NOT NULL DEFAULT FALSE, amounts_access BOOLEAN NOT NULL DEFAULT FALSE, "
+            "billing_access BOOLEAN NOT NULL DEFAULT FALSE, group_scope BOOLEAN NOT NULL DEFAULT FALSE, "
+            "created_at TIMESTAMP NOT NULL DEFAULT now())"
+        )
+        doctor_connection.exec_driver_sql(
+            "CREATE TABLE IF NOT EXISTS doctor_group_members("
+            "group_id INTEGER NOT NULL REFERENCES doctor_groups(id) ON DELETE CASCADE, "
+            "doctor_id INTEGER NOT NULL REFERENCES doctors(id) ON DELETE CASCADE, "
+            "PRIMARY KEY(group_id, doctor_id))"
+        )
+        doctor_connection.exec_driver_sql(
+            "ALTER TABLE useraccount ADD COLUMN IF NOT EXISTS doctor_id INTEGER REFERENCES doctors(id) ON DELETE SET NULL"
+        )
+        doctor_connection.exec_driver_sql(
+            "CREATE UNIQUE INDEX IF NOT EXISTS ux_useraccount_doctor ON useraccount(doctor_id) WHERE doctor_id IS NOT NULL"
+        )
+    ensure_portal_schema(engine)
     scan_columns = {column["name"] for column in inspect(engine).get_columns("scan")}
     user_columns = {column["name"] for column in inspect(engine).get_columns("useraccount")}
     stock_item_columns = {
@@ -609,6 +656,15 @@ def create_db_and_tables():
             connection.exec_driver_sql(
                 "ALTER TABLE patientdispensation ADD COLUMN medecin VARCHAR(255)"
             )
+        for column, ddl in (
+            ("validated_at", "TIMESTAMP"),
+            ("validated_by", "VARCHAR(255)"),
+            ("validated_price", "NUMERIC(12,2)"),
+            ("billed_at", "TIMESTAMP"),
+            ("billed_by", "VARCHAR(255)"),
+        ):
+            if column not in patient_dispensation_columns:
+                connection.exec_driver_sql(f"ALTER TABLE patientdispensation ADD COLUMN {column} {ddl}")
         if "salle" not in patient_dispensation_columns:
             connection.exec_driver_sql(
                 "ALTER TABLE patientdispensation ADD COLUMN salle VARCHAR(255)"
@@ -999,6 +1055,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="API QR Code et OCR", version="1.0.0", lifespan=lifespan)
 
 app.include_router(agenda_router)
+app.include_router(portal_public_router)
+app.include_router(portal_admin_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -1069,12 +1127,14 @@ def create_user(payload: UserCreate, authorization: Optional[str] = Header(defau
         ).first()
         if existing is not None:
             raise HTTPException(status_code=409, detail="Ce nom d'utilisateur existe déjà.")
+        _check_doctor_link(session, payload.doctor_id, None)
         user = UserAccount(
             username=username,
             password_hash=hash_password(payload.password),
             role=payload.role,
             active=True,
             agenda_enabled=payload.agenda_enabled,
+            doctor_id=payload.doctor_id,
         )
         session.add(user)
         session.flush()
@@ -1137,6 +1197,8 @@ def update_user(
                 detail="Utilisateur introuvable.",
             )
         before_data = audit_snapshot(user)
+        if "doctor_id" in changes:
+            _check_doctor_link(session, changes["doctor_id"], user_id)
         if "username" in changes:
             existing = session.exec(
                 select(UserAccount.id).where(
@@ -1467,6 +1529,950 @@ def delete_scan(scan_id: int, authorization: Optional[str] = Header(default=None
     return {"success": True}
 
 
+class StockPriceCreate(SQLModel):
+    price: float = Field(ge=0, le=1000000)
+    valid_from: date
+    valid_to: Optional[date] = None
+
+
+def _price_row(row) -> dict:
+    return {
+        "id": row["id"], "stock_item_id": row["stock_item_id"], "price": float(row["price"]),
+        "valid_from": row["valid_from"], "valid_to": row["valid_to"],
+    }
+
+
+@app.get("/api/stock/prices/current")
+def current_stock_prices(authorization: Optional[str] = Header(default=None)):
+    current_user(authorization)
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                "SELECT DISTINCT ON (stock_item_id) stock_item_id, price FROM stock_prices "
+                "WHERE valid_from <= CURRENT_DATE AND (valid_to IS NULL OR valid_to >= CURRENT_DATE) "
+                "ORDER BY stock_item_id, valid_from DESC"
+            )
+        ).all()
+    return {str(item_id): float(price) for item_id, price in rows}
+
+
+@app.get("/api/stock/{item_id}/prices")
+def list_stock_prices(item_id: int, authorization: Optional[str] = Header(default=None)):
+    current_user(authorization)
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                "SELECT id, stock_item_id, price, valid_from, valid_to FROM stock_prices "
+                "WHERE stock_item_id=:i ORDER BY valid_from DESC"
+            ),
+            {"i": item_id},
+        ).mappings().all()
+    return [_price_row(row) for row in rows]
+
+
+@app.post("/api/stock/{item_id}/prices", status_code=201)
+def add_stock_price(
+    item_id: int,
+    payload: StockPriceCreate,
+    authorization: Optional[str] = Header(default=None),
+):
+    user = require_admin(authorization)
+    if payload.valid_to is not None and payload.valid_to < payload.valid_from:
+        raise HTTPException(status_code=422, detail="La date de fin précède la date d’application.")
+    with engine.begin() as connection:
+        if not connection.execute(text("SELECT 1 FROM stockitem WHERE id=:i"), {"i": item_id}).first():
+            raise HTTPException(status_code=404, detail="Article introuvable.")
+        new_id = _apply_price(connection, item_id, payload, user.username)
+    return {"id": new_id}
+
+
+def _apply_price(connection, item_id: int, payload: StockPriceCreate, username: str) -> int:
+    start, end = payload.valid_from, payload.valid_to
+    if True:
+        existing = connection.execute(
+            text("SELECT id, price, valid_from, valid_to FROM stock_prices WHERE stock_item_id=:i ORDER BY valid_from"),
+            {"i": item_id},
+        ).mappings().all()
+        for old in existing:
+            old_start, old_end = old["valid_from"], old["valid_to"]
+            if (old_end is not None and old_end < start) or (end is not None and old_start > end):
+                continue
+            before = old_start < start
+            after = end is not None and (old_end is None or old_end > end)
+            if before:
+                connection.execute(
+                    text("UPDATE stock_prices SET valid_to=:d WHERE id=:id"),
+                    {"d": start - timedelta(days=1), "id": old["id"]},
+                )
+                if after:
+                    connection.execute(
+                        text(
+                            "INSERT INTO stock_prices(stock_item_id,price,valid_from,valid_to,created_by) "
+                            "VALUES(:i,:p,:f,:t,:u)"
+                        ),
+                        {"i": item_id, "p": old["price"], "f": end + timedelta(days=1), "t": old_end, "u": user.username},
+                    )
+            elif after:
+                connection.execute(
+                    text("UPDATE stock_prices SET valid_from=:d WHERE id=:id"),
+                    {"d": end + timedelta(days=1), "id": old["id"]},
+                )
+            else:
+                connection.execute(text("DELETE FROM stock_prices WHERE id=:id"), {"id": old["id"]})
+        new_id = connection.execute(
+            text(
+                "INSERT INTO stock_prices(stock_item_id,price,valid_from,valid_to,created_by) "
+                "VALUES(:i,:p,:f,:t,:u) RETURNING id"
+            ),
+            {"i": item_id, "p": round(payload.price, 2), "f": start, "t": end, "u": username},
+        ).scalar_one()
+    return new_id
+
+
+@app.put("/api/stock/prices/{price_id}")
+def update_stock_price(
+    price_id: int,
+    payload: StockPriceCreate,
+    authorization: Optional[str] = Header(default=None),
+):
+    user = require_admin(authorization)
+    if payload.valid_to is not None and payload.valid_to < payload.valid_from:
+        raise HTTPException(status_code=422, detail="La date de fin précède la date d’application.")
+    with engine.begin() as connection:
+        row = connection.execute(
+            text("DELETE FROM stock_prices WHERE id=:id RETURNING stock_item_id"), {"id": price_id}
+        ).first()
+        if not row:
+            raise HTTPException(status_code=404, detail="Prix introuvable.")
+        new_id = _apply_price(connection, row[0], payload, user.username)
+    return {"id": new_id}
+
+
+@app.delete("/api/stock/prices/{price_id}", status_code=204)
+def delete_stock_price(price_id: int, authorization: Optional[str] = Header(default=None)):
+    require_admin(authorization)
+    with engine.begin() as connection:
+        deleted = connection.execute(text("DELETE FROM stock_prices WHERE id=:id"), {"id": price_id}).rowcount
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Prix introuvable.")
+    return Response(status_code=204)
+
+
+STATS_GROUPS = {
+    "prestataire_produit": ("COALESCE(NULLIF(trim(d.medecin),''),'(Non renseigné)')", "d.denomination"),
+    "prestataire": ("COALESCE(NULLIF(trim(d.medecin),''),'(Non renseigné)')", None),
+    "produit": ("d.denomination", None),
+    "salle": ("COALESCE(NULLIF(trim(d.salle),''),'(Non renseignée)')", None),
+    "mois": ("to_char(d.dispensed_at,'YYYY-MM')", None),
+}
+
+
+PRICE_LOOKUP = (
+    "(SELECT sp.price FROM stock_prices sp WHERE sp.stock_item_id=d.stock_item_id "
+    "AND sp.valid_from <= d.dispensed_at::date AND (sp.valid_to IS NULL OR sp.valid_to >= d.dispensed_at::date) "
+    "ORDER BY sp.valid_from DESC LIMIT 1)"
+)
+PRICE_JOIN = (
+    f"LEFT JOIN LATERAL (SELECT CASE WHEN d.validated_at IS NOT NULL THEN d.validated_price ELSE {PRICE_LOOKUP} END AS price) pr ON true "
+)
+AMOUNT = "d.quantity * pr.price"
+
+
+def _stats_where(date_from, date_to, medecin, produit, salle, statut="", allowed=None):
+    clauses, params = ["1=1"], {}
+    if allowed is not None:
+        clauses.append("lower(trim(COALESCE(d.medecin,''))) = ANY(:allowed)")
+        params["allowed"] = list(allowed)
+    if date_from:
+        clauses.append("d.dispensed_at >= :df")
+        params["df"] = date_from
+    if date_to:
+        clauses.append("d.dispensed_at < :dt")
+        params["dt"] = date_to + timedelta(days=1)
+    if medecin == "__none__":
+        clauses.append("COALESCE(trim(d.medecin),'')=''")
+    elif medecin:
+        clauses.append("lower(trim(d.medecin))=lower(:med)")
+        params["med"] = medecin.strip()
+    if produit:
+        clauses.append("lower(d.denomination) LIKE :prod")
+        params["prod"] = f"%{produit.strip().lower()}%"
+    if salle:
+        clauses.append("lower(COALESCE(d.salle,'')) LIKE :salle")
+        params["salle"] = f"%{salle.strip().lower()}%"
+    if statut == "validated":
+        clauses.append("d.validated_at IS NOT NULL AND d.billed_at IS NULL")
+    elif statut == "billed":
+        clauses.append("d.billed_at IS NOT NULL")
+    elif statut == "pending":
+        clauses.append("d.validated_at IS NULL")
+    return " AND ".join(clauses), params
+
+
+@app.get("/api/stats/dispensations")
+def stats_dispensations(
+    group_by: str = Query(default="prestataire_produit"),
+    date_from: Optional[date] = Query(default=None),
+    date_to: Optional[date] = Query(default=None),
+    medecin: str = Query(default="", max_length=255),
+    produit: str = Query(default="", max_length=255),
+    salle: str = Query(default="", max_length=255),
+    statut: str = Query(default="", pattern="^(|validated|billed|pending)$"),
+    authorization: Optional[str] = Header(default=None),
+):
+    user = current_user(authorization)
+    scope = _require_stats_scope(user)
+    if group_by not in STATS_GROUPS:
+        raise HTTPException(status_code=422, detail="Regroupement inconnu.")
+    where, params = _stats_where(
+        date_from, date_to, medecin, produit, salle, statut, scope["names"] if scope else None
+    )
+    first, second = STATS_GROUPS[group_by]
+    select_cols = f"{first} AS groupe" + (f", {second} AS sous_groupe" if second else "")
+    group_cols = first + (f", {second}" if second else "")
+    metrics = (
+        f", SUM(d.quantity)::int AS quantite, COUNT(*)::int AS delivrances, "
+        f"COUNT(DISTINCT d.patient_id)::int AS patients, MAX(d.dispensed_at) AS derniere, "
+        f"COALESCE(SUM({AMOUNT}),0)::float AS total, "
+        f"COUNT(*) FILTER (WHERE pr.price IS NULL)::int AS sans_prix, "
+        f"COUNT(*) FILTER (WHERE d.validated_at IS NOT NULL)::int AS validees, "
+        f"COUNT(*) FILTER (WHERE d.billed_at IS NOT NULL)::int AS facturees "
+        f"FROM patientdispensation d {PRICE_JOIN}WHERE {where} GROUP BY {group_cols} "
+    )
+    with engine.connect() as connection:
+        groups = connection.execute(
+            text(
+                f"SELECT {select_cols}{metrics}"
+                + ("ORDER BY 1, quantite DESC" if second else "ORDER BY quantite DESC, 1")
+            ),
+            params,
+        ).mappings().all()
+        totals = connection.execute(
+            text(
+                "SELECT COALESCE(SUM(d.quantity),0)::int AS quantite, COUNT(*)::int AS delivrances, "
+                "COUNT(DISTINCT d.patient_id)::int AS patients, "
+                "COUNT(DISTINCT COALESCE(NULLIF(trim(d.medecin),''),'-'))::int AS prestataires, "
+                "COUNT(DISTINCT d.denomination)::int AS produits, "
+                f"COALESCE(SUM({AMOUNT}),0)::float AS total, "
+                "COUNT(*) FILTER (WHERE pr.price IS NULL)::int AS sans_prix, "
+                "COUNT(*) FILTER (WHERE d.validated_at IS NOT NULL)::int AS validees, "
+                "COUNT(*) FILTER (WHERE d.billed_at IS NOT NULL)::int AS facturees "
+                f"FROM patientdispensation d {PRICE_JOIN}WHERE {where}"
+            ),
+            params,
+        ).mappings().one()
+        doctors = [r[0] for r in connection.execute(
+            text("SELECT DISTINCT trim(medecin) FROM patientdispensation WHERE COALESCE(trim(medecin),'')<>'' ORDER BY 1")
+        )]
+        monthly = connection.execute(
+            text(
+                "SELECT * FROM (SELECT to_char(date_trunc('month', d.dispensed_at), 'YYYY-MM') AS mois, "
+                "SUM(d.quantity)::int AS quantite, COUNT(*)::int AS delivrances, "
+                f"COALESCE(SUM({AMOUNT}),0)::float AS total "
+                f"FROM patientdispensation d {PRICE_JOIN}WHERE {where} GROUP BY 1 ORDER BY 1 DESC LIMIT 12) m ORDER BY mois"
+            ),
+            params,
+        ).mappings().all()
+    groups = [dict(row) for row in groups]
+    totals = dict(totals)
+    monthly = [dict(row) for row in monthly]
+    if scope is not None:
+        doctors = [name for name in doctors if name.strip().lower() in scope["names"]]
+        _mask(groups + [totals] + monthly, scope, ("total", "sans_prix"), ("validees", "facturees"))
+    return {
+        "group_by": group_by,
+        "groups": groups,
+        "totals": totals,
+        "doctors": doctors,
+        "monthly": monthly,
+    }
+
+
+@app.get("/api/stats/dispensations/detail")
+def stats_dispensations_detail(
+    date_from: Optional[date] = Query(default=None),
+    date_to: Optional[date] = Query(default=None),
+    medecin: str = Query(default="", max_length=255),
+    produit: str = Query(default="", max_length=255),
+    salle: str = Query(default="", max_length=255),
+    statut: str = Query(default="", pattern="^(|validated|billed|pending)$"),
+    authorization: Optional[str] = Header(default=None),
+):
+    current_user_row = current_user(authorization)
+    scope = _require_stats_scope(current_user_row)
+    where, params = _stats_where(
+        date_from, date_to, medecin, produit, salle, statut, scope["names"] if scope else None
+    )
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                "SELECT d.dispensed_at, COALESCE(NULLIF(trim(d.medecin),''),'') AS prestataire, d.denomination, d.quantity, "
+                "d.numero_serie, d.expiration_date, COALESCE(d.salle,'') AS salle, "
+                "p.prenom || ' ' || p.nom AS patient, d.dispensed_by, pr.price::float AS prix_unitaire, "
+                f"({AMOUNT})::float AS montant, d.validated_at IS NOT NULL AS valide, d.billed_at IS NOT NULL AS facture "
+                f"FROM patientdispensation d JOIN patient p ON p.id=d.patient_id {PRICE_JOIN}WHERE {where} "
+                "ORDER BY d.dispensed_at DESC LIMIT 20000"
+            ),
+            params,
+        ).mappings().all()
+    rows = [dict(row) for row in rows]
+    if scope is not None:
+        _mask(rows, scope, ("prix_unitaire", "montant"), ("valide", "facture"))
+    return rows
+
+
+def _mask(rows: list, scope: dict, money_keys: tuple, state_keys: tuple) -> None:
+    for row in rows:
+        if not scope["amounts"]:
+            for key in money_keys:
+                if key in row:
+                    row[key] = None
+        if not scope["billing"]:
+            for key in state_keys:
+                if key in row:
+                    row[key] = None
+
+
+@app.get("/api/stats/rooms/occupancy")
+def stats_rooms_occupancy(
+    date_from: Optional[date] = Query(default=None),
+    date_to: Optional[date] = Query(default=None),
+    room: str = Query(default="", max_length=2000),
+    authorization: Optional[str] = Header(default=None),
+):
+    user = current_user(authorization)
+    if not has_agenda_access(user):
+        raise HTTPException(status_code=403, detail="Accès à l'agenda requis.")
+    today = date.today()
+    date_to = date_to or today
+    date_from = date_from or (date_to - timedelta(days=29))
+    if date_from > date_to or (date_to - date_from).days > 731:
+        raise HTTPException(status_code=422, detail="Période invalide (730 jours maximum).")
+    with engine.connect() as connection:
+        rooms = connection.execute(
+            text("SELECT id::text AS id, name, color FROM rooms WHERE active=true ORDER BY sort_order, name")
+        ).mappings().all()
+        all_rooms = [{"id": r["id"], "name": r["name"]} for r in rooms]
+        wanted = {part.strip() for part in room.split(",") if part.strip()}
+        if wanted:
+            rooms = [r for r in rooms if r["id"] in wanted]
+        blocks = connection.execute(
+            text("SELECT room_id::text AS room_id, weekday, start_time, end_time, valid_from, valid_to "
+                 "FROM scheduling_blocks WHERE active=true")
+        ).mappings().all()
+        opening = connection.execute(
+            text("SELECT room_id::text AS room_id, weekday, start_time, end_time, valid_from, valid_to FROM room_opening_slots")
+        ).mappings().all()
+        appointments = connection.execute(
+            text(
+                "SELECT room_id::text AS room_id, state::text AS state, "
+                "(starts_at AT TIME ZONE 'Europe/Brussels') AS s, (ends_at AT TIME ZONE 'Europe/Brussels') AS e "
+                "FROM appointments "
+                "WHERE (starts_at AT TIME ZONE 'Europe/Brussels')::date BETWEEN :df AND :dt"
+            ),
+            {"df": date_from, "dt": date_to},
+        ).mappings().all()
+
+    days = [date_from + timedelta(days=i) for i in range((date_to - date_from).days + 1)]
+
+    def open_minutes(slots):
+        total = 0
+        for slot in slots:
+            length = (slot["end_time"].hour * 60 + slot["end_time"].minute) - (slot["start_time"].hour * 60 + slot["start_time"].minute)
+            for day in days:
+                if day.weekday() != slot["weekday"]:
+                    continue
+                if slot["valid_from"] and day < slot["valid_from"]:
+                    continue
+                if slot["valid_to"] and day > slot["valid_to"]:
+                    continue
+                total += length
+        return total
+
+    result = {}
+    for r in rooms:
+        mine = [b for b in blocks if b["room_id"] == r["id"]] or [o for o in opening if o["room_id"] == r["id"]]
+        result[r["id"]] = {
+            "room_id": r["id"], "salle": r["name"], "couleur": r["color"],
+            "rendez_vous": 0, "annules": 0, "absents": 0,
+            "minutes_planifiees": 0, "minutes_ouvertes": open_minutes(mine) if mine else None,
+        }
+    heat = [[0] * 24 for _ in range(7)]
+    for a in appointments:
+        entry = result.get(a["room_id"])
+        if entry is None:
+            continue
+        if a["state"] in ("CANCELLED", "POSTPONED"):
+            entry["annules"] += 1
+            continue
+        if a["state"] == "NO_SHOW":
+            entry["absents"] += 1
+        entry["rendez_vous"] += 1
+        start, end = a["s"], a["e"]
+        entry["minutes_planifiees"] += int((end - start).total_seconds() // 60)
+        cursor = start
+        while cursor < end:
+            next_hour = cursor.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+            part = min(end, next_hour)
+            heat[cursor.weekday()][cursor.hour] += int((part - cursor).total_seconds() // 60)
+            cursor = part
+    rows = []
+    for entry in result.values():
+        opened = entry["minutes_ouvertes"]
+        entry["taux"] = round(min(entry["minutes_planifiees"] / opened, 9.99) * 100, 1) if opened else None
+        rows.append(entry)
+    planned = sum(e["minutes_planifiees"] for e in rows)
+    opened_total = sum(e["minutes_ouvertes"] or 0 for e in rows if e["minutes_ouvertes"])
+    return {
+        "date_from": date_from.isoformat(), "date_to": date_to.isoformat(),
+        "salles": rows,
+        "heatmap": heat,
+        "rooms": all_rooms,
+        "totaux": {
+            "rendez_vous": sum(e["rendez_vous"] for e in rows),
+            "minutes_planifiees": planned,
+            "minutes_ouvertes": opened_total,
+            "taux": round(planned / opened_total * 100, 1) if opened_total else None,
+        },
+    }
+
+
+def _stats_filters(
+    date_from: Optional[date] = Query(default=None),
+    date_to: Optional[date] = Query(default=None),
+    medecin: str = Query(default="", max_length=255),
+    produit: str = Query(default="", max_length=255),
+    salle: str = Query(default="", max_length=255),
+):
+    return _stats_where(date_from, date_to, medecin, produit, salle)
+
+
+@app.post("/api/stats/dispensations/validate")
+def validate_dispensations(
+    filters=Depends(_stats_filters),
+    authorization: Optional[str] = Header(default=None),
+):
+    user = require_admin(authorization)
+    where, params = filters
+    with engine.begin() as connection:
+        validated = connection.execute(
+            text(
+                "UPDATE patientdispensation d SET validated_at=now(), validated_by=:u, "
+                f"validated_price={PRICE_LOOKUP} "
+                f"WHERE d.validated_at IS NULL AND {PRICE_LOOKUP} IS NOT NULL AND {where}"
+            ),
+            {**params, "u": user.username},
+        ).rowcount
+        skipped = connection.execute(
+            text(f"SELECT COUNT(*) FROM patientdispensation d WHERE d.validated_at IS NULL AND {where}"), params
+        ).scalar_one()
+    return {"validees": validated, "sans_prix_ignorees": skipped}
+
+
+@app.post("/api/stats/dispensations/recalculate")
+def recalculate_dispensations(
+    filters=Depends(_stats_filters),
+    authorization: Optional[str] = Header(default=None),
+):
+    # Les délivrances non validées suivent toujours le tarif en vigueur ; les validées restent figées.
+    require_admin(authorization)
+    where, params = filters
+    with engine.begin() as connection:
+        row = connection.execute(
+            text(
+                "SELECT COUNT(*)::int AS recalculees, "
+                "COUNT(*) FILTER (WHERE pr.price IS NULL)::int AS sans_prix, "
+                f"COALESCE(SUM({AMOUNT}), 0)::float AS total "
+                f"FROM patientdispensation d {PRICE_JOIN}WHERE d.validated_at IS NULL AND {where}"
+            ),
+            params,
+        ).mappings().one()
+        figees = connection.execute(
+            text(f"SELECT COUNT(*) FROM patientdispensation d WHERE d.validated_at IS NOT NULL AND {where}"), params
+        ).scalar_one()
+    return {**dict(row), "figees": figees}
+
+
+@app.post("/api/stats/dispensations/unvalidate")
+def unvalidate_dispensations(
+    filters=Depends(_stats_filters),
+    authorization: Optional[str] = Header(default=None),
+):
+    require_admin(authorization)
+    where, params = filters
+    with engine.begin() as connection:
+        reopened = connection.execute(
+            text(
+                "UPDATE patientdispensation d SET validated_at=NULL, validated_by=NULL, validated_price=NULL "
+                f"WHERE d.validated_at IS NOT NULL AND d.billed_at IS NULL AND {where}"
+            ),
+            params,
+        ).rowcount
+    return {"rouvertes": reopened}
+
+
+@app.post("/api/stats/dispensations/bill")
+def bill_dispensations(
+    filters=Depends(_stats_filters),
+    authorization: Optional[str] = Header(default=None),
+):
+    # La facturation est définitive : plus de réouverture ni de recalcul possible.
+    user = require_admin(authorization)
+    where, params = filters
+    with engine.begin() as connection:
+        billed = connection.execute(
+            text(
+                "UPDATE patientdispensation d SET billed_at=now(), billed_by=:u "
+                f"WHERE d.validated_at IS NOT NULL AND d.billed_at IS NULL AND {where}"
+            ),
+            {**params, "u": user.username},
+        ).rowcount
+        not_validated = connection.execute(
+            text(f"SELECT COUNT(*) FROM patientdispensation d WHERE d.validated_at IS NULL AND {where}"), params
+        ).scalar_one()
+    return {"facturees": billed, "non_validees_ignorees": not_validated}
+
+
+class StockPriceBulk(StockPriceCreate):
+    item_ids: list[int] = Field(min_length=1, max_length=2000)
+
+
+@app.post("/api/stock/prices/bulk", status_code=201)
+def bulk_stock_prices(payload: StockPriceBulk, authorization: Optional[str] = Header(default=None)):
+    user = require_admin(authorization)
+    if payload.valid_to is not None and payload.valid_to < payload.valid_from:
+        raise HTTPException(status_code=422, detail="La date de fin précède la date d’application.")
+    single = StockPriceCreate(price=payload.price, valid_from=payload.valid_from, valid_to=payload.valid_to)
+    with engine.begin() as connection:
+        found = {row[0] for row in connection.execute(
+            text("SELECT id FROM stockitem WHERE id = ANY(:ids)"), {"ids": list(set(payload.item_ids))}
+        )}
+        for item_id in sorted(found):
+            _apply_price(connection, item_id, single, user.username)
+    return {"mis_a_jour": len(found)}
+
+
+class DoctorPayload(SQLModel):
+    inami6: str = Field(max_length=30)
+    inami11: str = Field(max_length=30)
+    nom: str = Field(min_length=1, max_length=120)
+    prenom: str = Field(min_length=1, max_length=120)
+    specialite: Optional[str] = Field(default=None, max_length=120)
+    email: Optional[str] = Field(default=None, max_length=255)
+    tel: Optional[str] = Field(default=None, max_length=40)
+    gsm: Optional[str] = Field(default=None, max_length=40)
+    adresse: Optional[str] = Field(default=None, max_length=255)
+    code_postal: Optional[str] = Field(default=None, max_length=20)
+    ville: Optional[str] = Field(default=None, max_length=120)
+    active: bool = True
+    resource_id: Optional[str] = None
+    stats_access: bool = False
+    amounts_access: bool = False
+    billing_access: bool = False
+
+
+class DoctorGroupPayload(SQLModel):
+    name: str = Field(min_length=1, max_length=120)
+    description: Optional[str] = Field(default=None, max_length=255)
+    stats_access: bool = False
+    amounts_access: bool = False
+    billing_access: bool = False
+    group_scope: bool = False
+    members: list[int] = Field(default_factory=list, max_length=500)
+
+
+def _check_doctor_link(session: Session, doctor_id: Optional[int], user_id: Optional[int]) -> None:
+    if doctor_id is None:
+        return
+    if session.execute(text("SELECT 1 FROM doctors WHERE id=:i"), {"i": doctor_id}).first() is None:
+        raise HTTPException(status_code=422, detail="Médecin introuvable.")
+    taken = session.execute(
+        text("SELECT username FROM useraccount WHERE doctor_id=:d AND (CAST(:u AS integer) IS NULL OR id<>CAST(:u AS integer))"),
+        {"d": doctor_id, "u": user_id},
+    ).first()
+    if taken:
+        raise HTTPException(status_code=409, detail=f"Ce médecin est déjà associé au compte « {taken[0]} ».")
+
+
+def _clean_text(value: Optional[str]) -> Optional[str]:
+    value = " ".join((value or "").split())
+    return value or None
+
+
+def _doctor_values(payload: DoctorPayload) -> dict:
+    inami6 = re.sub(r"\D", "", payload.inami6)
+    inami11 = re.sub(r"\D", "", payload.inami11)
+    if len(inami6) != 6:
+        raise HTTPException(status_code=422, detail="Le numéro INAMI court doit comporter 6 chiffres.")
+    if len(inami11) != 11:
+        raise HTTPException(status_code=422, detail="Le numéro INAMI complet doit comporter 11 chiffres.")
+    if not inami11.startswith(inami6):
+        raise HTTPException(status_code=422, detail="Le numéro INAMI complet doit commencer par les 6 chiffres du numéro court.")
+    email = _clean_text(payload.email)
+    if email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+        raise HTTPException(status_code=422, detail="Adresse e-mail invalide.")
+    nom, prenom = _clean_text(payload.nom), _clean_text(payload.prenom)
+    if not nom or not prenom:
+        raise HTTPException(status_code=422, detail="Le nom et le prénom sont requis.")
+    return {
+        "inami6": inami6, "inami11": inami11, "nom": nom, "prenom": prenom,
+        "specialite": _clean_text(payload.specialite), "email": email,
+        "tel": _clean_text(payload.tel), "gsm": _clean_text(payload.gsm),
+        "adresse": _clean_text(payload.adresse), "code_postal": _clean_text(payload.code_postal),
+        "ville": _clean_text(payload.ville), "active": payload.active,
+        "stats_access": payload.stats_access, "amounts_access": payload.amounts_access,
+        "billing_access": payload.billing_access,
+    }
+
+
+def _integrity_message(error: IntegrityError) -> str:
+    detail = str(error.orig)
+    if "inami6" in detail:
+        return "Ce numéro INAMI court existe déjà."
+    if "inami11" in detail:
+        return "Ce numéro INAMI complet existe déjà."
+    if "resource_id" in detail:
+        return "Ce médecin de l'agenda est déjà associé à une autre fiche."
+    if "name" in detail:
+        return "Un groupe porte déjà ce nom."
+    return "Enregistrement impossible : donnée en double."
+
+
+DOCTOR_COLUMNS = (
+    "d.id, d.inami6, d.inami11, d.nom, d.prenom, d.specialite, d.email, d.tel, d.gsm, d.adresse, "
+    "d.code_postal, d.ville, d.active, d.resource_id::text AS resource_id, d.stats_access, "
+    "d.amounts_access, d.billing_access, r.display_name AS display_name, u.username AS username, "
+    "COALESCE((SELECT array_agg(m.group_id ORDER BY m.group_id) FROM doctor_group_members m WHERE m.doctor_id=d.id), '{}') AS groups"
+)
+
+
+def _fetch_doctor(connection, doctor_id: int) -> dict:
+    row = connection.execute(
+        text(
+            f"SELECT {DOCTOR_COLUMNS} FROM doctors d LEFT JOIN people_resources r ON r.id=d.resource_id "
+            "LEFT JOIN useraccount u ON u.doctor_id=d.id WHERE d.id=:i"
+        ),
+        {"i": doctor_id},
+    ).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Médecin introuvable.")
+    return dict(row)
+
+
+def _resolve_resource(connection, payload: DoctorPayload, values: dict, create: bool) -> Optional[str]:
+    # Le libellé de l'agenda sert de lien avec les délivrances (champ « médecin »).
+    if payload.resource_id:
+        found = connection.execute(
+            text("SELECT id::text FROM people_resources WHERE id::text=:i AND kind='DOCTOR'"), {"i": payload.resource_id}
+        ).scalar_one_or_none()
+        if found is None:
+            raise HTTPException(status_code=422, detail="Médecin de l'agenda introuvable.")
+        return found
+    if not create:
+        return None
+    return connection.execute(
+        text(
+            "INSERT INTO people_resources(kind,display_name) VALUES('DOCTOR',:n) "
+            "ON CONFLICT (kind,display_name) DO UPDATE SET active=true RETURNING id::text"
+        ),
+        {"n": f"Dr {values['prenom']} {values['nom']}"},
+    ).scalar_one()
+
+
+@app.get("/api/admin/doctors")
+def admin_list_doctors(authorization: Optional[str] = Header(default=None)):
+    require_admin(authorization)
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                f"SELECT {DOCTOR_COLUMNS} FROM doctors d LEFT JOIN people_resources r ON r.id=d.resource_id "
+                "LEFT JOIN useraccount u ON u.doctor_id=d.id ORDER BY lower(d.nom), lower(d.prenom)"
+            )
+        ).mappings().all()
+        resources = connection.execute(
+            text("SELECT id::text AS id, display_name FROM people_resources WHERE kind='DOCTOR' AND active=true ORDER BY display_name")
+        ).mappings().all()
+    return {"doctors": [dict(row) for row in rows], "resources": [dict(row) for row in resources]}
+
+
+@app.post("/api/admin/doctors", status_code=201)
+def admin_create_doctor(payload: DoctorPayload, authorization: Optional[str] = Header(default=None)):
+    require_admin(authorization)
+    values = _doctor_values(payload)
+    try:
+        with engine.begin() as connection:
+            values["resource_id"] = _resolve_resource(connection, payload, values, create=True)
+            doctor_id = connection.execute(
+                text(
+                    "INSERT INTO doctors(inami6,inami11,nom,prenom,specialite,email,tel,gsm,adresse,code_postal,ville,"
+                    "active,resource_id,stats_access,amounts_access,billing_access) VALUES(:inami6,:inami11,:nom,:prenom,"
+                    ":specialite,:email,:tel,:gsm,:adresse,:code_postal,:ville,:active,CAST(:resource_id AS uuid),"
+                    ":stats_access,:amounts_access,:billing_access) RETURNING id"
+                ),
+                values,
+            ).scalar_one()
+            return _fetch_doctor(connection, doctor_id)
+    except IntegrityError as error:
+        raise HTTPException(status_code=409, detail=_integrity_message(error)) from error
+
+
+@app.put("/api/admin/doctors/{doctor_id}")
+def admin_update_doctor(doctor_id: int, payload: DoctorPayload, authorization: Optional[str] = Header(default=None)):
+    require_admin(authorization)
+    values = _doctor_values(payload)
+    try:
+        with engine.begin() as connection:
+            _fetch_doctor(connection, doctor_id)
+            resource = _resolve_resource(connection, payload, values, create=False)
+            sets = (
+                "inami6=:inami6, inami11=:inami11, nom=:nom, prenom=:prenom, specialite=:specialite, email=:email, "
+                "tel=:tel, gsm=:gsm, adresse=:adresse, code_postal=:code_postal, ville=:ville, active=:active, "
+                "stats_access=:stats_access, amounts_access=:amounts_access, billing_access=:billing_access"
+            )
+            if resource:
+                sets += ", resource_id=CAST(:resource_id AS uuid)"
+            values.update({"resource_id": resource, "id": doctor_id})
+            connection.execute(text(f"UPDATE doctors SET {sets} WHERE id=:id"), values)
+            return _fetch_doctor(connection, doctor_id)
+    except IntegrityError as error:
+        raise HTTPException(status_code=409, detail=_integrity_message(error)) from error
+
+
+@app.delete("/api/admin/doctors/{doctor_id}")
+def admin_delete_doctor(doctor_id: int, authorization: Optional[str] = Header(default=None)):
+    require_admin(authorization)
+    with engine.begin() as connection:
+        linked = connection.execute(text("SELECT username FROM useraccount WHERE doctor_id=:i"), {"i": doctor_id}).first()
+        if linked:
+            raise HTTPException(status_code=409, detail=f"Ce médecin est associé au compte « {linked[0]} ». Dissociez-le d'abord.")
+        if connection.execute(text("DELETE FROM doctors WHERE id=:i"), {"i": doctor_id}).rowcount != 1:
+            raise HTTPException(status_code=404, detail="Médecin introuvable.")
+    return {"success": True}
+
+
+def _fetch_group(connection, group_id: int) -> dict:
+    row = connection.execute(
+        text(
+            "SELECT g.id, g.name, g.description, g.stats_access, g.amounts_access, g.billing_access, g.group_scope, "
+            "COALESCE((SELECT array_agg(m.doctor_id ORDER BY m.doctor_id) FROM doctor_group_members m WHERE m.group_id=g.id), '{}') AS members "
+            "FROM doctor_groups g WHERE g.id=:i"
+        ),
+        {"i": group_id},
+    ).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Groupe introuvable.")
+    return dict(row)
+
+
+def _save_group_members(connection, group_id: int, members: list[int]) -> None:
+    ids = sorted(set(members))
+    connection.execute(text("DELETE FROM doctor_group_members WHERE group_id=:g"), {"g": group_id})
+    if ids:
+        found = {r[0] for r in connection.execute(text("SELECT id FROM doctors WHERE id = ANY(:ids)"), {"ids": ids})}
+        if found != set(ids):
+            raise HTTPException(status_code=422, detail="Un des médecins sélectionnés est introuvable.")
+        for doctor_id in ids:
+            connection.execute(
+                text("INSERT INTO doctor_group_members(group_id,doctor_id) VALUES(:g,:d)"), {"g": group_id, "d": doctor_id}
+            )
+
+
+@app.get("/api/admin/doctor-groups")
+def admin_list_doctor_groups(authorization: Optional[str] = Header(default=None)):
+    require_admin(authorization)
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                "SELECT g.id, g.name, g.description, g.stats_access, g.amounts_access, g.billing_access, g.group_scope, "
+                "COALESCE((SELECT array_agg(m.doctor_id ORDER BY m.doctor_id) FROM doctor_group_members m WHERE m.group_id=g.id), '{}') AS members "
+                "FROM doctor_groups g ORDER BY lower(g.name)"
+            )
+        ).mappings().all()
+    return [dict(row) for row in rows]
+
+
+@app.post("/api/admin/doctor-groups", status_code=201)
+def admin_create_doctor_group(payload: DoctorGroupPayload, authorization: Optional[str] = Header(default=None)):
+    require_admin(authorization)
+    name = _clean_text(payload.name)
+    if not name:
+        raise HTTPException(status_code=422, detail="Le nom du groupe est requis.")
+    try:
+        with engine.begin() as connection:
+            group_id = connection.execute(
+                text(
+                    "INSERT INTO doctor_groups(name,description,stats_access,amounts_access,billing_access,group_scope) "
+                    "VALUES(:name,:description,:stats_access,:amounts_access,:billing_access,:group_scope) RETURNING id"
+                ),
+                {**payload.model_dump(exclude={"members"}), "name": name, "description": _clean_text(payload.description)},
+            ).scalar_one()
+            _save_group_members(connection, group_id, payload.members)
+            return _fetch_group(connection, group_id)
+    except IntegrityError as error:
+        raise HTTPException(status_code=409, detail=_integrity_message(error)) from error
+
+
+@app.put("/api/admin/doctor-groups/{group_id}")
+def admin_update_doctor_group(group_id: int, payload: DoctorGroupPayload, authorization: Optional[str] = Header(default=None)):
+    require_admin(authorization)
+    name = _clean_text(payload.name)
+    if not name:
+        raise HTTPException(status_code=422, detail="Le nom du groupe est requis.")
+    try:
+        with engine.begin() as connection:
+            _fetch_group(connection, group_id)
+            connection.execute(
+                text(
+                    "UPDATE doctor_groups SET name=:name, description=:description, stats_access=:stats_access, "
+                    "amounts_access=:amounts_access, billing_access=:billing_access, group_scope=:group_scope WHERE id=:id"
+                ),
+                {**payload.model_dump(exclude={"members"}), "name": name, "description": _clean_text(payload.description), "id": group_id},
+            )
+            _save_group_members(connection, group_id, payload.members)
+            return _fetch_group(connection, group_id)
+    except IntegrityError as error:
+        raise HTTPException(status_code=409, detail=_integrity_message(error)) from error
+
+
+@app.delete("/api/admin/doctor-groups/{group_id}")
+def admin_delete_doctor_group(group_id: int, authorization: Optional[str] = Header(default=None)):
+    require_admin(authorization)
+    with engine.begin() as connection:
+        if connection.execute(text("DELETE FROM doctor_groups WHERE id=:i"), {"i": group_id}).rowcount != 1:
+            raise HTTPException(status_code=404, detail="Groupe introuvable.")
+    return {"success": True}
+
+
+def _stats_scope(user: UserAccount) -> Optional[dict]:
+    """None : aucune restriction (administrateur ou compte non associé à un médecin)."""
+    if user.role != "user" or not user.doctor_id:
+        return None
+    rights = {"stats": False, "amounts": False, "billing": False, "names": set()}
+    with engine.connect() as connection:
+        doctor = connection.execute(
+            text(
+                "SELECT d.stats_access, d.amounts_access, d.billing_access, r.display_name FROM doctors d "
+                "LEFT JOIN people_resources r ON r.id=d.resource_id WHERE d.id=:i AND d.active"
+            ),
+            {"i": user.doctor_id},
+        ).mappings().first()
+        if doctor is None:
+            return rights
+        rights.update(stats=doctor["stats_access"], amounts=doctor["amounts_access"], billing=doctor["billing_access"])
+        own_name = (doctor["display_name"] or "").strip().lower()
+        groups = connection.execute(
+            text(
+                "SELECT g.id, g.stats_access, g.amounts_access, g.billing_access, g.group_scope FROM doctor_groups g "
+                "JOIN doctor_group_members m ON m.group_id=g.id WHERE m.doctor_id=:i"
+            ),
+            {"i": user.doctor_id},
+        ).mappings().all()
+        for group in groups:
+            rights["stats"] = rights["stats"] or group["stats_access"]
+            rights["amounts"] = rights["amounts"] or group["amounts_access"]
+            rights["billing"] = rights["billing"] or group["billing_access"]
+            if group["group_scope"] and group["stats_access"]:
+                rights["names"].update(
+                    (r[0] or "").strip().lower()
+                    for r in connection.execute(
+                        text(
+                            "SELECT r.display_name FROM doctor_group_members m JOIN doctors dd ON dd.id=m.doctor_id AND dd.active "
+                            "JOIN people_resources r ON r.id=dd.resource_id WHERE m.group_id=:g"
+                        ),
+                        {"g": group["id"]},
+                    )
+                )
+    if own_name:
+        rights["names"].add(own_name)
+    rights["names"].discard("")
+    rights["names"] = sorted(rights["names"])
+    return rights
+
+
+def _require_stats_scope(user: UserAccount) -> Optional[dict]:
+    scope = _stats_scope(user)
+    if scope is not None and not scope["stats"]:
+        raise HTTPException(status_code=403, detail="Votre profil médecin n'a pas accès aux statistiques.")
+    return scope
+
+
+@app.get("/api/stats/rights")
+def stats_rights(authorization: Optional[str] = Header(default=None)):
+    scope = _stats_scope(current_user(authorization))
+    if scope is None:
+        return {"restricted": False, "stats": True, "amounts": True, "billing": True}
+    return {"restricted": True, "stats": scope["stats"], "amounts": scope["amounts"], "billing": scope["billing"]}
+
+
+@app.get("/api/stock/doctors")
+def list_stock_doctors(authorization: Optional[str] = Header(default=None)):
+    current_user(authorization)
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text("SELECT id::text AS id, display_name FROM people_resources WHERE kind='DOCTOR' AND active=true ORDER BY display_name")
+        ).mappings().all()
+    return [dict(row) for row in rows]
+
+
+@app.post("/api/stock/doctors", status_code=201)
+def add_stock_doctor(payload: dict, authorization: Optional[str] = Header(default=None)):
+    current_user(authorization)
+    name = " ".join(str(payload.get("display_name", "")).split())
+    if not name or len(name) > 255:
+        raise HTTPException(status_code=422, detail="Le nom du médecin est requis (255 caractères maximum).")
+    with engine.begin() as connection:
+        row = connection.execute(
+            text(
+                "INSERT INTO people_resources(kind,display_name) VALUES('DOCTOR',:name) "
+                "ON CONFLICT (kind,display_name) DO UPDATE SET active=true RETURNING id::text AS id, display_name"
+            ),
+            {"name": name},
+        ).mappings().one()
+    return dict(row)
+
+
+@app.get("/api/stock/search")
+def search_stock_for_dispense(
+    q: str = Query(default="", max_length=100),
+    authorization: Optional[str] = Header(default=None),
+):
+    current_user(authorization)
+    term = q.strip()
+    if len(term) < 2:
+        return []
+    pattern = f"%{term.lower()}%"
+    results: list[dict] = []
+    with Session(engine) as session:
+        items = session.exec(
+            select(StockItem).where(
+                func.lower(StockItem.denomination).like(pattern)
+                | func.lower(func.coalesce(StockItem.code_barres, "")).like(pattern)
+                | func.lower(func.coalesce(StockItem.numero_serie, "")).like(pattern)
+            ).order_by(StockItem.denomination).limit(20)
+        ).all()
+        for item in items:
+            code = (item.code_barres or item.numero_serie or "").strip()
+            if code and item.quantity > 0:
+                results.append({
+                    "denomination": item.denomination, "code": code, "quantity": item.quantity,
+                    "numero_serie": item.numero_serie, "numero_lot": item.numero_lot, "unit": False,
+                })
+        units = session.exec(
+            select(StockQrUnit, StockItem).join(StockItem, StockItem.id == StockQrUnit.stock_item_id).where(
+                (func.lower(StockQrUnit.numero_serie).like(pattern)
+                 | func.lower(StockItem.denomination).like(pattern)
+                 | func.lower(func.coalesce(StockItem.code_barres, "")).like(pattern))
+                & (StockQrUnit.quantity > 0)
+            ).order_by(StockItem.denomination, StockQrUnit.numero_serie).limit(30)
+        ).all()
+        for unit, item in units:
+            results.append({
+                "denomination": item.denomination, "code": unit.numero_serie.strip(), "quantity": unit.quantity,
+                "numero_serie": unit.numero_serie, "numero_lot": unit.numero_lot, "unit": True,
+            })
+    return results[:40]
+
+
 @app.get("/api/stock", response_model=list[StockItemRead])
 def list_stock_items(authorization: Optional[str] = Header(default=None)):
     current_user(authorization)
@@ -1518,6 +2524,52 @@ def create_stock_item(
         session.commit()
         session.refresh(item)
         return item
+
+
+LOCK_STATE_SQL = (
+    "CASE WHEN bool_or(d.billed_at IS NOT NULL) THEN 'billed' ELSE 'validated' END"
+)
+
+
+def _lock_state(session: Session, item_id: Optional[int] = None, serial: Optional[str] = None) -> Optional[str]:
+    # Un produit ou implant lié à une délivrance validée ou facturée est verrouillé.
+    clause, params = ("d.stock_item_id=:i", {"i": item_id}) if item_id is not None else (
+        "trim(d.numero_serie)=:s", {"s": (serial or "").strip()}
+    )
+    return session.execute(
+        text(f"SELECT {LOCK_STATE_SQL} FROM patientdispensation d WHERE d.validated_at IS NOT NULL AND {clause}"),
+        params,
+    ).scalar_one_or_none()
+
+
+def _ensure_not_locked(session: Session, item_id: Optional[int] = None, serial: Optional[str] = None) -> None:
+    state = _lock_state(session, item_id, serial)
+    if state:
+        label = "facturée(s)" if state == "billed" else "validée(s)"
+        raise HTTPException(
+            status_code=409,
+            detail=f"Ce produit est lié à des délivrances {label} : il ne peut plus être modifié ni supprimé."
+            + ("" if state == "billed" else " Rouvrez d'abord ces délivrances dans les statistiques."),
+        )
+
+
+@app.get("/api/stock/locked")
+def stock_locks(authorization: Optional[str] = Header(default=None)):
+    current_user(authorization)
+    with engine.connect() as connection:
+        items = connection.execute(
+            text(
+                f"SELECT d.stock_item_id AS k, {LOCK_STATE_SQL} AS state FROM patientdispensation d "
+                "WHERE d.validated_at IS NOT NULL GROUP BY d.stock_item_id"
+            )
+        ).all()
+        serials = connection.execute(
+            text(
+                f"SELECT trim(d.numero_serie) AS k, {LOCK_STATE_SQL} AS state FROM patientdispensation d "
+                "WHERE d.validated_at IS NOT NULL AND COALESCE(trim(d.numero_serie),'')<>'' GROUP BY trim(d.numero_serie)"
+            )
+        ).all()
+    return {"items": {str(k): s for k, s in items}, "serials": {k: s for k, s in serials}}
 
 
 @app.patch("/api/stock/{item_id}", response_model=StockItemRead)
@@ -1604,6 +2656,7 @@ def delete_stock_item(
         item = session.get(StockItem, item_id)
         if not item:
             raise HTTPException(status_code=404, detail="Article introuvable.")
+        _ensure_not_locked(session, item_id)
         has_qr_units = session.exec(
             select(StockQrUnit.id)
             .where(StockQrUnit.stock_item_id == item_id)
@@ -2074,6 +3127,8 @@ def dispense_stock_to_patient(
     salle = (payload.salle or "").strip() or None
     if not code:
         raise HTTPException(status_code=422, detail="Le code du produit est requis.")
+    if not medecin:
+        raise HTTPException(status_code=422, detail="Le médecin est obligatoire.")
     if payload.patient_id is None:
         nom = (payload.nom or "").strip()
         prenom = (payload.prenom or "").strip()
@@ -2389,6 +3444,7 @@ def update_stock_qr_unit(
         item = session.get(StockItem, unit.stock_item_id)
         if not item:
             raise RuntimeError("La sous-entité QR ne référence plus un article existant.")
+        _ensure_not_locked(session, serial=unit.numero_serie)
         before = audit_snapshot(unit)
         if "numero_serie" in changes and (changes["numero_serie"] or "").strip() != unit.numero_serie.strip():
             serial = (changes["numero_serie"] or "").strip()
@@ -2462,6 +3518,7 @@ def delete_stock_qr_unit(
         item = session.get(StockItem, unit.stock_item_id)
         if not item:
             raise RuntimeError("La sous-entité QR ne référence plus un article existant.")
+        _ensure_not_locked(session, serial=unit.numero_serie)
         item_before = audit_snapshot(item)
         unit_before = audit_snapshot(unit)
         result = session.exec(

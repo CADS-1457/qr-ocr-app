@@ -10,6 +10,8 @@
     :root{--primary:#0f4c81;--primary-dark:#0a365c;--bg:#eef2f7;--text:#1f2937;--muted:#64748b;--border:#dbe3ec}
     *{box-sizing:border-box}body{margin:0;padding:16px;background:var(--bg);color:var(--text);font-family:Arial,sans-serif}
     .container{max-width:1200px;margin:auto}.card{margin-bottom:16px;padding:20px;background:#fff;border-radius:16px;box-shadow:0 6px 22px rgba(15,76,129,.08)}
+    .work-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:16px;align-items:start}.work-col{min-width:0}@media(max-width:980px){.work-grid{grid-template-columns:1fr}}
+    .req{color:#b91c1c}
     h1{margin:0 0 6px;color:var(--primary);font-size:28px}h2{margin:0 0 12px}.muted{color:var(--muted)}
     .header,.actions,.auth-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.header,.auth-bar{justify-content:space-between}
     .btn{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:10px 14px;border:0;border-radius:10px;background:var(--primary);color:#fff;font-weight:700;text-decoration:none;cursor:pointer}
@@ -25,6 +27,24 @@
     .result{padding:16px;border:1px solid var(--border);border-radius:12px;background:#f8fafc}.result strong{display:block;font-size:19px}.quantity{margin-top:8px;color:var(--primary);font-size:22px;font-weight:700}
     #productReader{width:100%;overflow:hidden;border:1px solid var(--border);border-radius:12px}#productReader video{border-radius:10px}
     .file-picker{display:block;width:100%;min-height:44px;margin-top:10px;padding:10px;border:1px solid #cbd5e1;border-radius:10px;background:#fff}
+    .patient-modes{display:flex;align-items:center;gap:8px;margin:2px 0 14px}
+    .mode-btn{display:inline-flex;align-items:center;justify-content:center;width:48px;height:48px;border:1px solid var(--border);border-radius:12px;background:#fff;color:var(--primary);cursor:pointer;transition:background .15s,border-color .15s,color .15s}
+    .mode-btn:hover{background:#eff6ff;border-color:#93c5fd}
+    .mode-btn.is-active{background:var(--primary);border-color:var(--primary);color:#fff}
+    .mode-btn:focus-visible,.icon-btn:focus-visible{outline:3px solid #93c5fd;outline-offset:2px}
+    .mode-btn:disabled{opacity:.55;cursor:wait}
+    .mode-label{margin-left:6px;color:var(--muted);font-size:14px;font-weight:700}
+    .eid-card{display:flex;align-items:center;gap:12px;margin:0 0 6px;padding:10px 12px;border:1px solid #bfdbfe;border-radius:12px;background:#eff6ff}
+    .eid-card img{width:42px;height:52px;border-radius:8px;object-fit:cover;flex:none;background:#fff}
+    .eid-card-text{display:flex;flex-direction:column;min-width:0;flex:1}.eid-card-text strong,.eid-card-text span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .icon-btn{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border:0;border-radius:8px;background:transparent;color:var(--muted);cursor:pointer}.icon-btn:hover{background:#dbeafe;color:var(--primary)}
+    .scan-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px}.scan-camera{flex:0 1 220px;min-width:140px;min-height:48px;padding:10px;border:1px solid #cbd5e1;border-radius:12px;background:#fff;font:inherit}.scan-code-wrap{position:relative;flex:1 1 240px;min-width:160px}.scan-code-wrap .scan-code{width:100%}
+    .stock-suggestions{position:absolute;z-index:20;left:0;right:0;top:calc(100% + 4px);margin:0;padding:4px;list-style:none;max-height:300px;overflow:auto;border:1px solid var(--border);border-radius:12px;background:#fff;box-shadow:0 10px 28px rgba(15,76,129,.18)}
+    .stock-suggestions li{display:flex;justify-content:space-between;gap:12px;padding:9px 10px;border-radius:8px;cursor:pointer}.stock-suggestions li:hover,.stock-suggestions li[aria-selected="true"]{background:#dbeafe}
+    .stock-suggestions .s-main{min-width:0;display:flex;flex-direction:column}.stock-suggestions .s-main strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.stock-suggestions .s-sub{color:var(--muted);font-size:13px}
+    .stock-suggestions .s-qty{flex:none;align-self:center;color:var(--primary);font-weight:700;font-size:13px}.stock-suggestions .s-empty{cursor:default;color:var(--muted)}.stock-suggestions .s-empty:hover{background:transparent}
+    .scan-code{flex:1 1 240px;min-width:160px;min-height:48px;padding:10px 12px;border:1px solid #cbd5e1;border-radius:12px;font:inherit}label.mode-btn{margin:0}.mode-btn:disabled{opacity:.5;cursor:not-allowed}#productReader{margin-top:12px}
+    .doctor-row{display:flex;gap:8px;align-items:center;margin-top:6px}.doctor-row:first-of-type{margin-top:0}.doctor-row select,.doctor-row input{flex:1;min-width:0;min-height:48px;padding:10px 12px;border:1px solid #cbd5e1;border-radius:12px;background:#fff;font:inherit}
     [hidden]{display:none!important}
     @media(max-width:600px){body{padding:10px}.card{padding:15px}.header{align-items:stretch}.header .btn{width:100%}.login-grid{grid-template-columns:1fr}.login-grid .btn{width:100%}}
   </style>
@@ -49,22 +69,72 @@
     <div id="authStatus" class="status" aria-live="polite"></div>
   </section>
 
-  <section id="scanCard" class="card" hidden>
-    <h2>1. Scanner le produit</h2>
-    <p class="muted">Le code doit être enregistré sur la fiche du produit ou être un QR de sous-entité du stock. Vous pouvez aussi saisir le code ou le lire depuis une image.</p>
-    <div class="field"><label for="cameraSelect">Caméra</label><select id="cameraSelect"><option value="">Recherche des caméras...</option></select></div>
-    <div class="actions" style="margin:12px 0"><button id="startScan" class="btn" type="button">Démarrer le scanner</button></div>
-    <div id="productReader"></div>
-    <div class="field"><label for="scannedCode">Code produit</label><input id="scannedCode" type="text" maxlength="2000" autocomplete="off" placeholder="Scannez ou saisissez le code-barres / QR"></div>
-    <div class="actions" style="margin-top:10px"><button id="resolveCode" class="btn secondary" type="button">Rechercher le produit</button></div>
-    <label for="codeImage" class="field" style="display:block;margin-top:14px;font-weight:700">Ou lire un code depuis une image</label>
-    <input id="codeImage" class="file-picker" type="file" accept="image/*">
-    <button id="readImage" class="btn secondary" type="button">Lire le code de l’image</button>
-    <div id="scanStatus" class="status" aria-live="polite"></div>
+  <div class="work-grid">
+  <div class="work-col">
+  <section id="patientCard" class="card" hidden>
+    <h2>1. Recherche patient</h2>
+    <div class="patient-modes" role="group" aria-label="Fiche patient">
+      <button type="button" class="mode-btn is-active" data-mode="existing" aria-pressed="true" title="Patient existant" aria-label="Patient existant">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10" cy="8" r="4"/><path d="M2 21v-1a6 6 0 0 1 6-6h4"/><circle cx="18" cy="18" r="3"/><path d="m21 21-1.5-1.5"/></svg>
+      </button>
+      <button type="button" class="mode-btn" data-mode="new" aria-pressed="false" title="Créer un patient manuellement" aria-label="Créer un patient manuellement">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10" cy="8" r="4"/><path d="M2 21v-1a6 6 0 0 1 6-6h4"/><path d="M19 14v6M16 17h6"/></svg>
+      </button>
+      <button type="button" id="readEid" class="mode-btn" title="Créer le patient en lisant sa carte d’identité (eID)" aria-label="Lire la carte d’identité">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="2.5"/><circle cx="8.5" cy="11" r="2"/><path d="M5.5 16c.5-1.6 1.7-2.4 3-2.4s2.5.8 3 2.4M14 9.5h5M14 13h4"/></svg>
+      </button>
+      <span id="patientModeLabel" class="mode-label" aria-live="polite">Patient existant</span>
+    </div>
+    <select id="patientMode" hidden aria-hidden="true">
+      <option value="existing">Patient existant</option>
+      <option value="new">Nouveau patient</option>
+    </select>
+    <div id="existingPatientFields">
+      <div class="field"><label for="patientSearch">Rechercher un patient</label><input id="patientSearch" type="search" placeholder="Nom ou prénom" autocomplete="off"><div id="patientSearchResults" class="patient-search-results" role="listbox" aria-label="Résultats de recherche patient" hidden></div></div>
+      <div class="field"><label for="patientSelect">Patient</label><select id="patientSelect"><option value="">Chargement des patients...</option></select></div>
+    </div>
+    <div id="newPatientFields" hidden>
+      <div id="eidCard" class="eid-card" hidden>
+        <img id="eidPhoto" alt="Photo de la carte" hidden>
+        <div class="eid-card-text"><strong id="eidCardName"></strong><span id="eidCardDetail" class="muted"></span></div>
+        <button type="button" id="eidClear" class="icon-btn" title="Ignorer les données de la carte" aria-label="Ignorer les données de la carte">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+      <div class="field"><label for="patientFirstName">Prénom</label><input id="patientFirstName" type="text" maxlength="255" autocomplete="given-name"></div>
+      <div class="field"><label for="patientLastName">Nom</label><input id="patientLastName" type="text" maxlength="255" autocomplete="family-name"></div>
+      <div class="field"><label for="patientBirthDate">Date de naissance</label><input id="patientBirthDate" type="date"></div>
+    </div>
   </section>
 
+  <section id="scanCard" class="card" hidden>
+    <h2>2. Scanner le produit</h2>
+    <p class="muted">Le code doit être enregistré sur la fiche du produit ou être un QR de sous-entité du stock. Vous pouvez aussi saisir le code ou le lire depuis une image.</p>
+    <div class="scan-row">
+      <select id="cameraSelect" class="scan-camera" aria-label="Caméra" title="Caméra"><option value="">Recherche des caméras...</option></select>
+      <button id="startScan" class="mode-btn" type="button" title="Démarrer le scanner" aria-label="Démarrer le scanner">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><path d="M4 12h16"/></svg>
+      </button>
+      <label for="codeImage" class="mode-btn" title="Lire un code depuis une image" aria-label="Lire un code depuis une image" tabindex="0">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="1.8"/><path d="m21 15-4.5-4.5L6 21"/></svg>
+      </label>
+      <div class="scan-code-wrap">
+        <input id="scannedCode" class="scan-code" type="text" maxlength="2000" autocomplete="off" placeholder="N° de série, code-barres ou libellé du produit" role="combobox" aria-expanded="false" aria-controls="stockSuggestions" aria-autocomplete="list" aria-label="Code produit">
+        <ul id="stockSuggestions" class="stock-suggestions" role="listbox" hidden></ul>
+      </div>
+      <button id="resolveCode" class="mode-btn" type="button" title="Rechercher le produit" aria-label="Rechercher le produit">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      </button>
+      <input id="codeImage" type="file" accept="image/*" hidden>
+      <button id="readImage" type="button" hidden aria-hidden="true"></button>
+    </div>
+    <div id="productReader"></div>    <div id="scanStatus" class="status" aria-live="polite"></div>
+  </section>
+
+  </div>
+  <div class="work-col">
   <section id="productCard" class="card" hidden>
-    <h2>2. Produit sélectionné</h2>
+    <h2>3. Produit sélectionné</h2>
     <div class="result">
       <strong id="productName"></strong>
       <div id="productCode" class="muted"></div>
@@ -75,33 +145,33 @@
     <div class="field"><label for="dispenseQuantity">Quantité à délivrer</label><input id="dispenseQuantity" type="number" min="1" step="1" value="1"></div>
   </section>
 
-  <section id="patientCard" class="card" hidden>
-    <h2>3. Patient</h2>
+  <section id="actCard" class="card" hidden>
+    <h2>4. Informations de l’acte</h2>
     <div class="field">
-      <label for="patientMode">Fiche patient</label>
-      <select id="patientMode">
-        <option value="existing">Patient existant</option>
-        <option value="new">Nouveau patient</option>
-      </select>
+      <label for="doctorName">Médecin ayant pratiqué l’acte <span class="req" title="Obligatoire">*</span></label>
+      <div class="doctor-row">
+        <select id="doctorName"><option value="">Chargement des médecins…</option></select>
+        <button id="addDoctorToggle" type="button" class="mode-btn" title="Ajouter un médecin à la liste" aria-label="Ajouter un médecin à la liste">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10" cy="8" r="4"/><path d="M2 21v-1a6 6 0 0 1 6-6h4"/><path d="M19 14v6M16 17h6"/></svg>
+        </button>
+      </div>
+      <div id="addDoctorRow" class="doctor-row" hidden>
+        <input id="newDoctorName" type="text" maxlength="255" placeholder="Nom du médecin (ex. Dr Dupont)" aria-label="Nom du nouveau médecin">
+        <button id="addDoctorSave" type="button" class="mode-btn" title="Enregistrer le médecin" aria-label="Enregistrer le médecin">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12.5 4.5 4.5L19 7.5"/></svg>
+        </button>
+      </div>
     </div>
-    <div id="existingPatientFields">
-      <div class="field"><label for="patientSearch">Rechercher un patient</label><input id="patientSearch" type="search" placeholder="Nom ou prénom" autocomplete="off"><div id="patientSearchResults" class="patient-search-results" role="listbox" aria-label="Résultats de recherche patient" hidden></div></div>
-      <div class="field"><label for="patientSelect">Patient</label><select id="patientSelect"><option value="">Chargement des patients...</option></select></div>
-    </div>
-    <div id="newPatientFields" hidden>
-      <div class="field"><label for="patientFirstName">Prénom</label><input id="patientFirstName" type="text" maxlength="255" autocomplete="given-name"></div>
-      <div class="field"><label for="patientLastName">Nom</label><input id="patientLastName" type="text" maxlength="255" autocomplete="family-name"></div>
-      <div class="field"><label for="patientBirthDate">Date de naissance</label><input id="patientBirthDate" type="date"></div>
-    </div>
-    <h2 style="margin-top:20px">4. Informations de l’acte</h2>
-    <div class="field"><label for="doctorName">Médecin ayant pratiqué l’acte</label><input id="doctorName" type="text" maxlength="255" autocomplete="name"></div>
-    <div class="field"><label for="procedureRoom">Salle</label><input id="procedureRoom" type="text" maxlength="255" placeholder="Ex. Salle 2"></div>
+    <div class="field"><label for="procedureRoom">Note</label><textarea id="procedureRoom" rows="3" maxlength="255" placeholder="Note liée à cette délivrance (facultatif)" style="width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:10px;font:inherit;resize:vertical"></textarea></div>
     <button id="dispenseButton" class="btn" type="button" disabled>Confirmer la délivrance et déduire du stock</button>
     <div id="dispenseStatus" class="status" aria-live="polite"></div>
   </section>
+  </div>
+  </div>
 </main>
 <script src="auth.js"></script>
 <script src="gs1.js"></script>
+<script src="eid.js"></script>
 <script>
 'use strict';
 
@@ -140,7 +210,8 @@ function updateAuthState() {
   $('loginForm').hidden = signedIn;
   $('authBar').hidden = !signedIn;
   $('scanCard').hidden = !signedIn;
-  $('patientCard').hidden = !signedIn || !resolvedProduct;
+  $('patientCard').hidden = !signedIn;
+  $('actCard').hidden = !signedIn || !resolvedProduct;
   $('productCard').hidden = !signedIn || !resolvedProduct;
   $('signedInAs').textContent = signedIn
     ? `Connecté : ${currentUser.username} (${
@@ -203,11 +274,94 @@ function renderPatientSearchResults(matches, query) {
   });
 }
 
+let cardIdentity = null;
+
 function updatePatientMode() {
   const existing = $('patientMode').value === 'existing';
   $('existingPatientFields').hidden = !existing;
   $('newPatientFields').hidden = existing;
+  document.querySelectorAll('.patient-modes .mode-btn[data-mode]').forEach((button) => {
+    const active = button.dataset.mode === $('patientMode').value;
+    button.classList.toggle('is-active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+  $('patientModeLabel').textContent = existing
+    ? 'Patient existant'
+    : (cardIdentity ? 'Nouveau patient · carte d’identité' : 'Nouveau patient · saisie manuelle');
   updateDispenseControls();
+}
+
+function clearCardIdentity() {
+  cardIdentity = null;
+  $('eidCard').hidden = true;
+  $('eidPhoto').hidden = true;
+  $('eidPhoto').removeAttribute('src');
+  updatePatientMode();
+}
+
+async function readIdentityCard() {
+  const button = $('readEid');
+  button.disabled = true;
+  showStatus($('dispenseStatus'), 'Lecture de la carte d’identité en cours…', 'info');
+  try {
+    const card = await window.EidReader.read();
+    if (!card.nom || !card.prenom) throw new Error('La carte ne contient pas de nom lisible.');
+    const query = new URLSearchParams({ nom: card.nom, prenom: card.prenom });
+    if (card.date_naissance) query.set('date_naissance', card.date_naissance);
+    if (card.numero_national) query.set('numero_national', card.numero_national);
+    const response = await fetch(`${API}/agenda/patients/match?${query}`, { headers: window.AppAuth.headers() });
+    const known = response.ok ? await response.json() : null;
+    if (known && known.id) {
+      await loadPatients(known.id);
+      $('patientMode').value = 'existing';
+      $('patientSearch').value = '';
+      renderPatientOptions();
+      $('patientSelect').value = String(known.id);
+      clearCardIdentity();
+      showStatus($('dispenseStatus'), `Patient déjà connu : ${known.prenom} ${known.nom} a été sélectionné.`, 'success');
+      updatePatientMode();
+      return;
+    }
+    cardIdentity = card;
+    $('patientMode').value = 'new';
+    $('patientLastName').value = card.nom || '';
+    $('patientFirstName').value = card.prenom || '';
+    $('patientBirthDate').value = card.date_naissance || '';
+    $('eidCardName').textContent = `${card.prenom} ${card.nom}`;
+    $('eidCardDetail').textContent = [card.date_naissance, card.commune].filter(Boolean).join(' · ') || 'Carte lue';
+    if (card.photo) {
+      $('eidPhoto').src = `data:image/jpeg;base64,${card.photo}`;
+      $('eidPhoto').hidden = false;
+    } else {
+      $('eidPhoto').hidden = true;
+    }
+    $('eidCard').hidden = false;
+    updatePatientMode();
+    showStatus($('dispenseStatus'), 'Carte lue : vérifiez les informations, le patient sera créé lors de la délivrance.', 'success');
+  } catch (error) {
+    showStatus($('dispenseStatus'), error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function createPatientFromCard() {
+  const card = cardIdentity;
+  const body = {
+    nom: $('patientLastName').value.trim(),
+    prenom: $('patientFirstName').value.trim(),
+    date_naissance: $('patientBirthDate').value
+  };
+  ['prenoms', 'lieu_naissance', 'sexe', 'nationalite', 'adresse', 'code_postal', 'commune', 'numero_national', 'photo']
+    .forEach((key) => { if (card[key]) body[key] = card[key]; });
+  const response = await fetch(`${API}/agenda/patients`, {
+    method: 'POST',
+    headers: window.AppAuth.headers({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(body)
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.detail || `Création du patient impossible : HTTP ${response.status}`);
+  return result.id;
 }
 
 function updateDispenseControls() {
@@ -227,6 +381,7 @@ function updateDispenseControls() {
     || processing
     || !resolvedProduct
     || !validQuantity
+    || !$('doctorName').value.trim()
     || !patientReady;
 }
 
@@ -244,7 +399,7 @@ function renderProduct() {
   $('dispenseQuantity').max = String(resolvedProduct.quantity);
   $('dispenseQuantity').value = '1';
   $('productCard').hidden = false;
-  $('patientCard').hidden = false;
+  $('actCard').hidden = false;
   updateDispenseControls();
 }
 
@@ -262,7 +417,7 @@ async function loadCameras() {
   }
   try {
     const cameras = await Html5Qrcode.getCameras();
-    $('cameraSelect').replaceChildren(...cameras.map((camera, index) =>
+    $('cameraSelect').replaceChildren(new Option('Aucune caméra (saisie manuelle)', ''), ...cameras.map((camera, index) =>
       new Option(camera.label || `Caméra ${index + 1}`, camera.id)
     ));
     if (!cameras.length) {
@@ -270,8 +425,7 @@ async function loadCameras() {
       $('startScan').disabled = true;
       return;
     }
-    const preferred = cameras.find((camera) => /back|rear|environment|arrière|dos/i.test(camera.label));
-    $('cameraSelect').value = (preferred || cameras[0]).id;
+    $('cameraSelect').value = '';
   } catch (error) {
     $('cameraSelect').replaceChildren(new Option('Caméras indisponibles', ''));
     showStatus($('scanStatus'), `Impossible de rechercher les caméras : ${error.message}`, 'error');
@@ -286,7 +440,8 @@ async function startCamera() {
   if (!currentUser || processing || typeof Html5Qrcode === 'undefined') return;
   const cameraId = $('cameraSelect').value;
   if (!cameraId) {
-    showStatus($('scanStatus'), 'Sélectionnez une caméra disponible.', 'error');
+    showStatus($('scanStatus'), 'Aucune caméra sélectionnée : saisissez le libellé, le code-barres ou le numéro de série.', 'info');
+    $('scannedCode').focus();
     return;
   }
   try {
@@ -381,7 +536,7 @@ async function resolveProduct(code = $('scannedCode').value) {
     resolvedProduct = null;
     if ($('scannedCode').value.trim() === normalizedCode) $('scannedCode').value = '';
     $('productCard').hidden = true;
-    $('patientCard').hidden = true;
+    $('actCard').hidden = true;
     updateDispenseControls();
     showStatus($('scanStatus'), `Produit introuvable : ${error.message}`, 'error');
   } finally {
@@ -465,6 +620,18 @@ async function dispenseProduct() {
   };
   if ($('patientMode').value === 'existing') {
     payload.patient_id = Number($('patientSelect').value);
+  } else if (cardIdentity) {
+    processing = true;
+    $('dispenseButton').disabled = true;
+    try {
+      payload.patient_id = await createPatientFromCard();
+    } catch (error) {
+      processing = false;
+      updateDispenseControls();
+      showStatus($('dispenseStatus'), error.message, 'error');
+      return;
+    }
+    processing = false;
   } else {
     payload.prenom = $('patientFirstName').value.trim();
     payload.nom = $('patientLastName').value.trim();
@@ -492,6 +659,7 @@ async function dispenseProduct() {
       'success'
     );
     if (result.patient_id && $('patientMode').value === 'new') {
+      clearCardIdentity();
       $('patientMode').value = 'existing';
       $('patientSearch').value = '';
       updatePatientMode();
@@ -527,7 +695,7 @@ async function login(event) {
     $('loginPassword').value = '';
     updateAuthState();
     showStatus($('authStatus'), 'Connexion réussie.', 'success');
-    await Promise.all([loadPatients(), loadCameras()]);
+    await Promise.all([loadPatients(), loadCameras(), loadDoctors()]);
   } catch (error) {
     showStatus($('authStatus'), `Connexion impossible : ${error.message}`, 'error');
   } finally {
@@ -559,10 +727,20 @@ $('scannedCode').addEventListener('keydown', (event) => {
   }
 });
 $('cameraSelect').addEventListener('change', () => {
-  if (cameraRunning) startCamera();
+  if (!$('cameraSelect').value) stopCamera().catch(() => {});
+  else if (cameraRunning) startCamera();
 });
 $('readImage').addEventListener('click', readCodeImage);
+$('codeImage').addEventListener('change', () => { if ($('codeImage').files[0]) readCodeImage(); });
 $('patientMode').addEventListener('change', updatePatientMode);
+document.querySelectorAll('.patient-modes .mode-btn[data-mode]').forEach((button) => {
+  button.addEventListener('click', () => {
+    $('patientMode').value = button.dataset.mode;
+    updatePatientMode();
+  });
+});
+$('readEid').addEventListener('click', readIdentityCard);
+$('eidClear').addEventListener('click', clearCardIdentity);
 $('patientSearch').addEventListener('input', renderPatientOptions);
 $('patientSelect').addEventListener('change', () => {
   renderPatientOptions();
@@ -575,6 +753,146 @@ $('dispenseButton').addEventListener('click', dispenseProduct);
 window.addEventListener('beforeunload', () => {
   if (scanner && cameraRunning) scanner.stop();
 });
+
+let suggestTimer = null;
+let suggestSeq = 0;
+let suggestItems = [];
+let suggestIndex = -1;
+
+function hideSuggestions() {
+  $('stockSuggestions').hidden = true;
+  $('scannedCode').setAttribute('aria-expanded', 'false');
+  suggestIndex = -1;
+}
+
+function markSuggestion() {
+  [...$('stockSuggestions').children].forEach((li, i) => li.setAttribute('aria-selected', String(i === suggestIndex)));
+}
+
+function chooseSuggestion(item) {
+  hideSuggestions();
+  $('scannedCode').value = item.code;
+  resolveProduct(item.code);
+}
+
+function renderSuggestions(items, term) {
+  const list = $('stockSuggestions');
+  list.replaceChildren();
+  suggestItems = items;
+  suggestIndex = -1;
+  if (!items.length) {
+    const li = document.createElement('li');
+    li.className = 's-empty';
+    li.textContent = `Aucun produit disponible pour « ${term} ».`;
+    list.append(li);
+  }
+  items.forEach((item) => {
+    const li = document.createElement('li');
+    li.setAttribute('role', 'option');
+    const main = document.createElement('span');
+    main.className = 's-main';
+    const name = document.createElement('strong');
+    name.textContent = item.denomination;
+    const sub = document.createElement('span');
+    sub.className = 's-sub';
+    sub.textContent = [item.numero_serie ? `N° série ${item.numero_serie}` : `Code ${item.code}`,
+      item.numero_lot ? `Lot ${item.numero_lot}` : ''].filter(Boolean).join(' · ');
+    main.append(name, sub);
+    const qty = document.createElement('span');
+    qty.className = 's-qty';
+    qty.textContent = `× ${item.quantity}`;
+    li.append(main, qty);
+    li.addEventListener('mousedown', (event) => { event.preventDefault(); chooseSuggestion(item); });
+    list.append(li);
+  });
+  list.hidden = false;
+  $('scannedCode').setAttribute('aria-expanded', 'true');
+}
+
+async function searchStock() {
+  const term = $('scannedCode').value.trim();
+  if (term.length < 2 || !currentUser) {
+    hideSuggestions();
+    return;
+  }
+  const seq = ++suggestSeq;
+  try {
+    const response = await fetch(`${API}/stock/search?q=${encodeURIComponent(term)}`, { headers: window.AppAuth.headers() });
+    if (!response.ok || seq !== suggestSeq) return;
+    renderSuggestions(await response.json(), term);
+  } catch {
+    hideSuggestions();
+  }
+}
+
+$('scannedCode').addEventListener('input', () => {
+  clearTimeout(suggestTimer);
+  suggestTimer = setTimeout(searchStock, 250);
+});
+$('scannedCode').addEventListener('blur', () => setTimeout(hideSuggestions, 120));
+$('scannedCode').addEventListener('keydown', (event) => {
+  if ($('stockSuggestions').hidden || !suggestItems.length) return;
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault();
+    const step = event.key === 'ArrowDown' ? 1 : -1;
+    suggestIndex = (suggestIndex + step + suggestItems.length) % suggestItems.length;
+    markSuggestion();
+  } else if (event.key === 'Enter' && suggestIndex >= 0) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    chooseSuggestion(suggestItems[suggestIndex]);
+  } else if (event.key === 'Escape') {
+    hideSuggestions();
+  }
+}, true);
+
+async function loadDoctors(selectName = null) {
+  const select = $('doctorName');
+  const keep = selectName ?? select.value;
+  try {
+    const response = await fetch(`${API}/stock/doctors`, { headers: window.AppAuth.headers() });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const doctors = await response.json();
+    select.replaceChildren(new Option('— Choisir un médecin —', ''), ...doctors.map((d) => new Option(d.display_name, d.display_name)));
+    select.value = doctors.some((d) => d.display_name === keep) ? keep : '';
+  } catch {
+    select.replaceChildren(new Option('Liste des médecins indisponible', ''));
+  }
+  updateDispenseControls();
+}
+
+async function addDoctor() {
+  const name = $('newDoctorName').value.trim();
+  if (!name) return;
+  $('addDoctorSave').disabled = true;
+  try {
+    const response = await fetch(`${API}/stock/doctors`, {
+      method: 'POST',
+      headers: window.AppAuth.headers({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ display_name: name })
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(typeof body.detail === 'string' ? body.detail : `HTTP ${response.status}`);
+    $('newDoctorName').value = '';
+    $('addDoctorRow').hidden = true;
+    await loadDoctors(body.display_name);
+    showStatus($('dispenseStatus'), `${body.display_name} ajouté à la liste des médecins.`, 'success');
+  } catch (error) {
+    showStatus($('dispenseStatus'), `Ajout impossible : ${error.message}`, 'error');
+  } finally {
+    $('addDoctorSave').disabled = false;
+  }
+}
+
+$('addDoctorToggle').addEventListener('click', () => {
+  $('addDoctorRow').hidden = !$('addDoctorRow').hidden;
+  if (!$('addDoctorRow').hidden) $('newDoctorName').focus();
+});
+$('addDoctorSave').addEventListener('click', addDoctor);
+$('newDoctorName').addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') { event.preventDefault(); addDoctor(); }
+});
+$('doctorName').addEventListener('change', updateDispenseControls);
 
 async function initialize() {
   const today = new Date();
@@ -604,7 +922,7 @@ async function initialize() {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     currentUser = await response.json();
     updateAuthState();
-    await Promise.all([loadPatients(), loadCameras()]);
+    await Promise.all([loadPatients(), loadCameras(), loadDoctors()]);
   } catch (error) {
     showStatus($('authStatus'), `Impossible d’initialiser la page : ${error.message}`, 'error');
   }

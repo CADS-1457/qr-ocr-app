@@ -1157,6 +1157,11 @@ window.AppAuth = {
                 { user: data.user || null }
             );
 
+            // Recharge la page pour appliquer menus et droits du compte connecté.
+            if (!isLoginPage()) {
+                setTimeout(() => window.location.reload(), 150);
+            }
+
             return data.user || null;
         } catch (error) {
             dispatchAuthEvent(
@@ -1173,6 +1178,8 @@ window.AppAuth = {
 
         if (redirect) {
             window.location.replace(redirect);
+        } else if (!isLoginPage()) {
+            setTimeout(() => window.location.reload(), 150);
         }
     }
 };

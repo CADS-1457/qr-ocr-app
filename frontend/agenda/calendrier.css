@@ -351,8 +351,10 @@
 .calendar-page .cal-event:hover,
 .calendar-page .cal-event:focus-visible {
   z-index: 4;
-  background: color-mix(in srgb, var(--event-color, #0f4c81) 24%, #fff);
-  box-shadow: 0 3px 10px rgba(15, 23, 42, .3);
+  background: color-mix(in srgb, var(--event-color, #0f4c81) 14%, #fff);
+  box-shadow: 0 1px 3px rgba(15, 23, 42, .18);
+  outline: 2px solid color-mix(in srgb, var(--event-color, #0f4c81) 70%, #fff);
+  outline-offset: -2px;
 }
 
 .cal-event strong,
@@ -646,7 +648,7 @@
 }
 
 .calendar-page .cal-zone:hover {
-  background-color: color-mix(in srgb, var(--zone-color) 20%, #fff);
+  background-color: color-mix(in srgb, var(--zone-color) 12%, #fff);
 }
 
 .cal-zone-label {

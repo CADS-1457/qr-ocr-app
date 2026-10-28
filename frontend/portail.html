@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f4c81">
+  <meta name="robots" content="noindex">
+  <title>Prendre rendez-vous</title>
+  <style>
+    :root{--primary:#0f4c81;--primary2:#0a365c;--bg:#eef2f7;--card:#fff;--text:#1f2937;--muted:#64748b;--border:#dbe3ec;--danger:#b91c1c}
+    *{box-sizing:border-box} body{margin:0;padding:16px;background:var(--bg);color:var(--text);font-family:Arial,sans-serif}
+    .container{max-width:720px;margin:auto}.card{background:var(--card);border-radius:16px;padding:22px;margin-bottom:16px;box-shadow:0 6px 22px rgba(15,76,129,.08)}
+    h1{margin:0 0 6px;color:var(--primary);font-size:26px}h2{margin:0 0 12px;color:var(--primary);font-size:20px}.muted{color:var(--muted)}
+    .btn{display:inline-flex;align-items:center;justify-content:center;min-height:44px;padding:10px 16px;border:0;border-radius:10px;background:var(--primary);color:#fff;font-weight:700;font:inherit;font-weight:700;cursor:pointer}
+    .btn:hover{background:var(--primary2)}.btn.light{background:#fff;color:var(--text);border:1px solid var(--border)}.btn.danger{background:var(--danger)}.btn:disabled{opacity:.55;cursor:not-allowed}
+    .actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+    .field{margin-bottom:12px}.field label{display:block;margin-bottom:6px;font-weight:700;font-size:14px}.field input,.field select,.field textarea{width:100%;min-height:44px;padding:10px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;font:inherit}
+    .two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .code{font-size:28px;letter-spacing:10px;text-align:center}
+    .check{display:flex;gap:10px;align-items:flex-start;font-size:14px;line-height:1.4}.check input{width:20px;height:20px;margin-top:2px}
+    .status{display:none;margin-top:14px;padding:12px;border-radius:10px}.status.info{display:block;background:#dbeafe;color:#1e40af}.status.success{display:block;background:#dcfce7;color:#166534}.status.error{display:block;background:#fee2e2;color:#991b1b}
+    .days{display:flex;gap:8px;overflow:auto;padding-bottom:6px}.day{flex:0 0 auto;padding:8px 12px;border:1px solid var(--border);border-radius:10px;background:#fff;cursor:pointer;text-align:center;font:inherit}
+    .day.on{background:var(--primary);color:#fff;border-color:var(--primary)}.day:disabled{opacity:.4;cursor:not-allowed}
+    .slots{display:grid;grid-template-columns:repeat(auto-fill,minmax(92px,1fr));gap:8px;margin-top:12px}.slot{padding:10px;border:1px solid var(--primary);border-radius:10px;background:#fff;color:var(--primary);font:inherit;font-weight:700;cursor:pointer}
+    .slot.on,.slot:hover{background:var(--primary);color:#fff}
+    .appt{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:12px;border:1px solid var(--border);border-radius:12px;margin-top:10px}
+    .badge{display:inline-block;padding:3px 9px;border-radius:999px;background:#dbeafe;color:#1e40af;font-size:12px;font-weight:700}
+    .top{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+    [hidden]{display:none!important}
+    @media(max-width:520px){.two{grid-template-columns:1fr}body{padding:10px}}
+  </style>
+</head>
+<body>
+<div class="container">
+  <section class="card">
+    <div class="top"><div><h1>Prendre rendez-vous</h1><div id="intro" class="muted">Réservation en ligne</div></div>
+      <div><span id="who" class="muted"></span> <button id="logout" class="btn light" type="button" hidden>Se déconnecter</button></div></div>
+    <div id="closed" class="status error" hidden>La réservation en ligne est momentanément indisponible.</div>
+  </section>
+
+  <section id="stepEmail" class="card" hidden>
+    <h2>Connexion</h2>
+    <p class="muted">Saisissez votre adresse e-mail : nous vous envoyons un code à usage unique. Aucun mot de passe n’est nécessaire.</p>
+    <form id="emailForm"><div class="field"><label for="email">Adresse e-mail</label><input id="email" type="email" autocomplete="email" required maxlength="254"></div>
+      <button class="btn" type="submit">Recevoir mon code</button></form>
+  </section>
+
+  <section id="stepCode" class="card" hidden>
+    <h2>Code de vérification</h2>
+    <p class="muted">Un code à 6 chiffres vient d’être envoyé (valable 10 minutes).</p>
+    <form id="codeForm"><div class="field"><label for="code">Code</label><input id="code" class="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required></div>
+      <div class="actions"><button class="btn" type="submit">Valider</button><button id="codeBack" class="btn light" type="button">Changer d’e-mail</button></div></form>
+  </section>
+
+  <section id="stepBook" class="card" hidden>
+    <h2>Nouveau rendez-vous</h2>
+    <div class="field"><label for="type">Motif</label><select id="type"></select></div>
+    <div id="daysBox" hidden><label><strong>Date</strong></label><div id="days" class="days"></div></div>
+    <div id="slots" class="slots"></div>
+    <div id="noSlots" class="muted" hidden>Aucun créneau disponible sur cette période.</div>
+    <form id="bookForm" hidden>
+      <h2 style="margin-top:20px">Vos informations</h2>
+      <p id="chosen" class="badge"></p>
+      <div class="two"><div class="field"><label for="nom">Nom</label><input id="nom" required maxlength="100" autocomplete="family-name"></div>
+        <div class="field"><label for="prenom">Prénom</label><input id="prenom" required maxlength="100" autocomplete="given-name"></div></div>
+      <div class="two"><div class="field"><label for="dob">Date de naissance</label><input id="dob" type="date" required autocomplete="bday"></div>
+        <div class="field"><label for="mobile">Mobile (facultatif)</label><input id="mobile" type="tel" maxlength="30" autocomplete="tel"></div></div>
+      <div class="field"><label for="notes">Message (facultatif)</label><textarea id="notes" maxlength="500" rows="2"></textarea></div>
+      <label class="check"><input id="consent" type="checkbox" required> J’accepte que mes données soient utilisées pour la gestion de mon rendez-vous.</label>
+      <div class="actions"><button class="btn" type="submit">Demander ce rendez-vous</button></div>
+    </form>
+  </section>
+
+  <section id="stepMine" class="card" hidden>
+    <h2>Mes rendez-vous à venir</h2>
+    <div id="mine"></div>
+    <div id="mineEmpty" class="muted" hidden>Aucun rendez-vous à venir.</div>
+  </section>
+
+  <div id="status" class="status" role="status"></div>
+</div>
+
+<script>
+'use strict';
+const API = '/api/portal';
+const $ = (id) => document.getElementById(id);
+let config = {}, email = '', slotsByDay = {}, chosen = null, windowStart = null;
+
+function setStatus(message, type = 'info') { $('status').textContent = message; $('status').className = message ? `status ${type}` : 'status'; }
+
+async function api(path, options = {}) {
+  const response = await fetch(`${API}${path}`, { credentials: 'same-origin', ...options });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    if (response.status === 401 && email) { email = ''; show('email'); }
+    const detail = Array.isArray(result.detail) ? result.detail.map((e) => e.msg).join(' ; ') : result.detail;
+    throw new Error(detail || `Erreur ${response.status}`);
+  }
+  return result;
+}
+const post = (path, body) => api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body ?? {}) });
+
+function show(step) {
+  $('stepEmail').hidden = step !== 'email';
+  $('stepCode').hidden = step !== 'code';
+  $('stepBook').hidden = step !== 'home';
+  $('stepMine').hidden = step !== 'home';
+  $('logout').hidden = step !== 'home';
+  $('who').textContent = step === 'home' ? email : '';
+  if (step === 'email') setStatus('');
+}
+
+const fmtTime = (iso) => new Date(iso).toLocaleString('fr-BE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Brussels' });
+
+async function enter() {
+  const me = await api('/me');
+  email = me.email;
+  show('home');
+  const offer = await api('/offer');
+  $('type').replaceChildren(new Option('Choisir un motif…', ''), ...offer.map((o) => new Option(`${o.name}${o.duration_minutes ? ` (${o.duration_minutes} min)` : ''}`, o.id)));
+  await loadMine();
+}
+
+async function loadMine() {
+  const list = await api('/appointments');
+  const box = $('mine');
+  box.replaceChildren();
+  $('mineEmpty').hidden = list.length > 0;
+  list.forEach((item) => {
+    const row = document.createElement('div');
+    row.className = 'appt';
+    const info = document.createElement('div');
+    const title = document.createElement('strong');
+    title.textContent = fmtTime(item.starts_at);
+    const detail = document.createElement('div');
+    detail.className = 'muted';
+    detail.textContent = [item.type, item.room, item.doctor, item.patient].filter(Boolean).join(' · ');
+    const state = document.createElement('span');
+    state.className = 'badge';
+    state.textContent = item.state_label;
+    info.append(title, detail, state);
+    row.append(info);
+    if (item.can_cancel) {
+      const cancel = document.createElement('button');
+      cancel.className = 'btn danger';
+      cancel.type = 'button';
+      cancel.textContent = 'Annuler';
+      cancel.onclick = async () => {
+        if (!window.confirm('Annuler ce rendez-vous ?')) return;
+        try { await post(`/appointments/${item.id}/cancel`); setStatus('Rendez-vous annulé.', 'success'); await loadMine(); await loadSlots(); }
+        catch (error) { setStatus(error.message, 'error'); }
+      };
+      row.append(cancel);
+    }
+    box.append(row);
+  });
+}
+
+const isoDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+async function loadSlots() {
+  chosen = null;
+  $('bookForm').hidden = true;
+  $('slots').replaceChildren();
+  $('days').replaceChildren();
+  const typeId = $('type').value;
+  $('daysBox').hidden = !typeId;
+  $('noSlots').hidden = true;
+  if (!typeId) return;
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() + 1);
+  slotsByDay = {};
+  try {
+    for (let i = 0; i < 4; i += 1) {
+      const from = new Date(start); from.setDate(from.getDate() + i * 14);
+      const to = new Date(from); to.setDate(to.getDate() + 14);
+      const list = await api(`/slots?type_id=${typeId}&start=${isoDay(from)}&end=${isoDay(to)}`);
+      if (!list.length && i > 0 && Object.keys(slotsByDay).length) break;
+      list.forEach((slot) => { (slotsByDay[slot.date] ||= []).push(slot); });
+    }
+  } catch (error) { setStatus(error.message, 'error'); return; }
+  const days = Object.keys(slotsByDay).sort();
+  $('noSlots').hidden = days.length > 0;
+  days.forEach((day) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'day';
+    const d = new Date(`${day}T12:00:00`);
+    button.textContent = d.toLocaleDateString('fr-BE', { weekday: 'short', day: 'numeric', month: 'short' });
+    button.onclick = () => pickDay(day, button);
+    $('days').append(button);
+  });
+}
+
+function pickDay(day, button) {
+  document.querySelectorAll('.day').forEach((b) => b.classList.remove('on'));
+  button.classList.add('on');
+  chosen = null;
+  $('bookForm').hidden = true;
+  const box = $('slots');
+  box.replaceChildren();
+  slotsByDay[day].forEach((slot) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'slot';
+    b.textContent = slot.doctor ? `${slot.time} · ${slot.doctor}` : slot.time;
+    b.onclick = () => {
+      box.querySelectorAll('.slot').forEach((x) => x.classList.remove('on'));
+      b.classList.add('on');
+      chosen = slot;
+      $('chosen').textContent = `${fmtTime(slot.starts_at)} — ${slot.room}`;
+      $('bookForm').hidden = false;
+      $('bookForm').scrollIntoView({ behavior: 'smooth' });
+    };
+    box.append(b);
+  });
+}
+
+$('emailForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  try {
+    await post('/auth/request-code', { email: $('email').value });
+    show('code');
+    setStatus('');
+    $('code').focus();
+  } catch (error) { setStatus(error.message, 'error'); }
+});
+$('codeBack').onclick = () => show('email');
+$('codeForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  try {
+    await post('/auth/verify', { email: $('email').value, code: $('code').value });
+    $('code').value = '';
+    setStatus('');
+    await enter();
+  } catch (error) { setStatus(error.message, 'error'); }
+});
+$('logout').onclick = async () => { await post('/auth/logout').catch(() => {}); email = ''; show('email'); };
+$('type').addEventListener('change', loadSlots);
+
+$('bookForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!chosen) return;
+  const button = event.submitter;
+  button.disabled = true;
+  try {
+    await post('/appointments', {
+      type_id: $('type').value, room_id: chosen.room_id, doctor_id: chosen.doctor_id, starts_at: chosen.starts_at,
+      patient: { nom: $('nom').value, prenom: $('prenom').value, date_naissance: $('dob').value, mobile: $('mobile').value || null },
+      notes: $('notes').value || null, consent: $('consent').checked
+    });
+    setStatus('Demande envoyée. Vous recevrez un e-mail dès que le secrétariat l’aura confirmée.', 'success');
+    $('bookForm').reset();
+    await loadMine();
+    await loadSlots();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  } catch (error) {
+    setStatus(error.message, 'error');
+    if (/disponible/.test(error.message)) await loadSlots();
+  } finally { button.disabled = false; }
+});
+
+(async () => {
+  try {
+    config = await api('/config');
+    if (config.intro_text) $('intro').textContent = config.intro_text;
+    if (!config.enabled) { $('closed').hidden = false; return; }
+    try { await enter(); } catch { show('email'); }
+  } catch (error) { $('closed').hidden = false; }
+})();
+</script>
+</body>
+</html>

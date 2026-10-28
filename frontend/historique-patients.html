@@ -26,6 +26,7 @@
   </style>
   <link rel="stylesheet" href="app-shell.css">
   <script src="app-navigation.js" defer></script>
+  <script src="refresh-button.js" defer></script>
 </head>
 <body data-auth-required="true">
 <main class="container">
@@ -52,7 +53,7 @@
       <button id="refreshButton" class="btn secondary" type="button">Actualiser</button>
     </div>
     <div class="filters">
-      <div class="field search-field"><label for="searchInput">Rechercher</label><input id="searchInput" type="search" placeholder="Patient, produit, code/QR, médecin, salle ou utilisateur"></div>
+      <div class="field search-field"><label for="searchInput">Rechercher</label><input id="searchInput" type="search" placeholder="Patient, produit, code/QR, médecin, note ou utilisateur"></div>
       <div class="field"><label for="dateFrom">Du</label><input id="dateFrom" type="date"></div>
       <div class="field"><label for="dateTo">Au</label><input id="dateTo" type="date"></div>
       <button id="clearFilters" class="btn light" type="button">Effacer les filtres</button>
@@ -60,7 +61,7 @@
     <div id="historyStatus" class="status" aria-live="polite"></div>
     <div class="table-wrap" style="margin-top:16px">
       <table>
-        <thead><tr><th>Date de délivrance</th><th>Patient</th><th>Date de naissance</th><th>Produit</th><th>Quantité</th><th>Médecin</th><th>Salle</th><th>Code scanné</th><th>Numéro de série</th><th>Date de péremption</th><th>Délivré par</th><th>Raccourci</th></tr></thead>
+        <thead><tr><th>Date de délivrance</th><th>Patient</th><th>Date de naissance</th><th>Produit</th><th>Quantité</th><th>Médecin</th><th>Note</th><th>Code scanné</th><th>Numéro de série</th><th>Date de péremption</th><th>Délivré par</th><th>Raccourci</th></tr></thead>
         <tbody id="historyRows"></tbody>
       </table>
       <div id="emptyState" class="empty" hidden>Aucune délivrance ne correspond à ces critères.</div>

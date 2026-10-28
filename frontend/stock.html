@@ -15,7 +15,7 @@
     .btn:hover{background:var(--primary-dark)}.btn.secondary{background:#475569}.btn.light{background:#fff;color:var(--text);border:1px solid var(--border)}.btn.danger{background:var(--danger)}.btn.small{min-height:34px;padding:7px 10px;font-size:14px}.btn:disabled{opacity:.55;cursor:not-allowed}
     .form-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.field{min-width:0}.field label{display:block;margin-bottom:6px;font-size:14px;font-weight:700}.field input{width:100%;min-height:44px;padding:10px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;font:inherit}
     .status{display:none;margin-top:14px;padding:12px;border-radius:10px}.status.info{display:block;background:#dbeafe;color:#1e40af}.status.success{display:block;background:#dcfce7;color:#166534}.status.error{display:block;background:#fee2e2;color:#991b1b}
-    .filters{max-width:480px;margin:16px 0}.table-wrap{overflow:auto;border:1px solid var(--border);border-radius:12px}table{width:100%;min-width:850px;border-collapse:collapse}th,td{padding:11px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:top}th{background:var(--primary);color:#fff;white-space:nowrap}.empty{text-align:center;padding:30px;color:var(--muted)}.quantity{font-weight:700;color:var(--primary)}.expired{color:var(--danger);font-weight:700}.actions-cell{white-space:nowrap}
+    .filters{max-width:480px;margin:16px 0}.table-wrap{overflow:auto;border:1px solid var(--border);border-radius:12px}table{width:100%;min-width:0;border-collapse:collapse}th,td{padding:8px 10px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:top}th{background:var(--primary);color:#fff;white-space:nowrap}.empty{text-align:center;padding:30px;color:var(--muted)}.quantity{font-weight:700;color:var(--primary)}.expired{color:var(--danger);font-weight:700}.actions-cell{white-space:nowrap;width:1%}.actions-cell .actions{flex-wrap:nowrap;gap:6px}
     .history-link{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--primary);text-decoration:none}.history-link:hover{background:#dbeafe}.history-link svg{width:18px;height:18px}
     .edit-dialog{width:min(720px,calc(100% - 32px));padding:24px;border:0;border-radius:16px;color:var(--text);box-shadow:0 18px 50px rgba(15,23,42,.25)}
     .edit-dialog::backdrop{background:rgba(15,23,42,.55)}
@@ -24,16 +24,19 @@
     .field textarea{width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;font:inherit;resize:vertical}
     .field input:focus,.field textarea:focus{outline:2px solid var(--primary);outline-offset:1px}
     @media(max-width:520px){.edit-dialog .form-grid{grid-template-columns:1fr}}
+    .icon-only{min-width:34px;padding:7px}
     .confirm-dialog{width:min(440px,calc(100% - 32px));padding:22px;border:0;border-radius:16px;color:var(--text);box-shadow:0 18px 50px rgba(15,23,42,.25)}
     .confirm-dialog::backdrop{background:rgba(15,23,42,.55)}
     .confirm-dialog h2{margin:0 0 10px;color:var(--danger)}
     .confirm-dialog p{line-height:1.5}
+    .confirm-dialog.info h2{color:var(--primary)}.btn.is-locked{opacity:.5}
     .confirm-dialog form{display:flex;justify-content:flex-end;gap:10px;margin-top:20px}
     @media(max-width:760px){.form-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:520px){body{padding:10px}.card{padding:15px}.form-grid{grid-template-columns:1fr}.header{align-items:stretch}.header .btn{width:100%}}
   </style>
   <link rel="stylesheet" href="app-shell.css">
   <script src="app-navigation.js" defer></script>
   <script src="dialog-close.js" defer></script>
+  <script src="refresh-button.js" defer></script>
 </head>
 <body data-auth-required="true">
 <main class="container">
@@ -61,7 +64,7 @@
       <div class="form-grid">
         <div class="field"><label for="denomination">Dénomination</label><input id="denomination" type="text" maxlength="255" required></div>
         <div class="field"><label for="quantity">Quantité</label><input id="quantity" type="number" min="0" step="1" required></div>
-        <div class="field"><label for="entryDate">Date d’entrée</label><input id="entryDate" type="date" required></div>
+        <div class="field"><label for="entryDate">Date d’entrée</label><input id="entryDate" type="date"></div>
         <div class="field"><label for="codeBarres">Code-barres produit</label><input id="codeBarres" type="text" maxlength="255" autocomplete="off"></div>
         <div class="field"><label for="numeroLot">Numéro de lot</label><input id="numeroLot" type="text" maxlength="255"></div>
         <div class="field"><label for="expirationDate">Date de péremption</label><input id="expirationDate" type="date"></div>
@@ -72,11 +75,11 @@
   </section>
 
   <section class="card">
-    <div class="toolbar"><h2>Inventaire</h2><button id="refreshButton" class="btn secondary" type="button" disabled>Actualiser</button></div>
+    <div class="toolbar"><h2>Inventaire</h2><div class="actions"><button id="bulkPrice" class="btn light" type="button" hidden title="Modifier le prix de tous les articles cochés" aria-label="Modification du prix par lot"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 7.5A5 5 0 0 0 12.5 5C9.5 5 8 7 8 9.5v5C8 17 9.5 19 12.5 19A5 5 0 0 0 17 16.5"/><path d="M6 11h8M6 14h8"/></svg><span style="margin-left:6px">Modifier le prix par lot</span><span id="bulkCount" style="margin-left:8px;padding:1px 8px;border-radius:999px;background:#0f4c81;color:#fff;font-size:13px" title="Articles sélectionnés">0</span></button><button id="refreshButton" class="btn secondary" type="button" disabled>Actualiser</button></div></div>
     <div class="field filters"><label for="search">Rechercher un article</label><input id="search" type="search" placeholder="Dénomination, lot ou série..." disabled></div>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Dénomination</th><th>Quantité totale</th><th>Sous-entités QR</th><th>Code-barres produit</th><th>Date d’entrée</th><th>Numéro de lot</th><th>Date de péremption</th><th id="actionsHeader" hidden>Actions</th></tr></thead>
+        <thead><tr><th id="selectHeader" style="width:1%" hidden><input type="checkbox" id="selectAll" title="Sélectionner tous les articles affichés" aria-label="Sélectionner tous les articles affichés"></th><th>Dénomination</th><th>Quantité totale</th><th>Sous-entités QR</th><th>Prix actuel</th><th>Date d’entrée</th><th id="actionsHeader" hidden>Actions</th></tr></thead>
         <tbody id="stockRows"></tbody>
       </table>
       <div id="emptyState" class="empty">Connectez-vous pour consulter le stock.</div>
@@ -135,12 +138,57 @@
     </div>
   </form>
 </dialog>
+<dialog id="bulkDialog" class="edit-dialog" aria-labelledby="bulkTitle">
+  <form id="bulkForm">
+    <h2 id="bulkTitle">Prix des articles sélectionnés</h2>
+    <p id="bulkInfo" class="muted"></p>
+    <div class="form-grid">
+      <div class="field"><label for="bulkValue">Prix unitaire (€)</label><input id="bulkValue" type="number" min="0" step="0.01" inputmode="decimal" required></div>
+      <div class="field"><label for="bulkFrom">Date d’application</label><input id="bulkFrom" type="date" required></div>
+      <div class="field"><label for="bulkTo">Date de fin (facultatif)</label><input id="bulkTo" type="date"></div>
+    </div>
+    <div id="bulkStatus" class="status"></div>
+    <div class="actions" style="margin-top:16px;justify-content:flex-end">
+      <button class="btn" type="submit">Appliquer à la sélection</button>
+    </div>
+  </form>
+</dialog>
+<dialog id="priceDialog" class="edit-dialog" aria-labelledby="priceTitle">
+  <form id="priceForm">
+    <h2 id="priceTitle">Prix</h2>
+    <p class="muted">Un prix sans date de fin reste valable : un nouveau prix daté ferme automatiquement le précédent et s’applique aux futures délivrances.</p>
+    <div class="form-grid">
+      <div class="field"><label for="priceValue">Prix unitaire (€)</label><input id="priceValue" type="number" min="0" step="0.01" inputmode="decimal" required></div>
+      <div class="field"><label for="priceFrom">Date d’application</label><input id="priceFrom" type="date" required></div>
+      <div class="field"><label for="priceTo">Date de fin (facultatif)</label><input id="priceTo" type="date"></div>
+    </div>
+    <div id="priceStatus" class="status"></div>
+    <div class="table-wrap" style="margin-top:14px">
+      <table style="min-width:0">
+        <thead><tr><th>Prix</th><th>Du</th><th>Au</th><th>État</th><th></th></tr></thead>
+        <tbody id="priceRows"></tbody>
+      </table>
+      <div id="priceEmpty" class="empty" hidden>Aucun prix enregistré.</div>
+    </div>
+    <div class="actions" style="margin-top:16px;justify-content:flex-end">
+      <button id="priceCancelEdit" class="btn light" type="button" hidden>Annuler la modification</button>
+      <button id="priceSave" class="btn" type="submit">Enregistrer le prix</button>
+    </div>
+  </form>
+</dialog>
 <dialog id="confirmDialog" class="confirm-dialog" aria-labelledby="confirmTitle" aria-describedby="confirmMessage">
   <h2 id="confirmTitle">Confirmer la suppression</h2>
   <p id="confirmMessage"></p>
   <div class="actions">
     <button id="cancelDelete" class="btn light" type="button">Annuler</button>
     <button id="confirmDelete" class="btn danger" type="button">Supprimer</button>
+  </div>
+</dialog>
+<dialog id="lockDialog" class="confirm-dialog info" aria-labelledby="lockTitle" aria-describedby="lockMessage">
+  <h2 id="lockTitle">Produit verrouillé</h2>
+  <p id="lockMessage"></p>
+  <div class="actions">
+    <button id="lockOk" class="btn" type="button">Compris</button>
   </div>
 </dialog>
 <script src="auth.js"></script>
@@ -173,6 +221,40 @@ function confirmDeletion(message) {
     };
     dialog.addEventListener('cancel', () => resolve(false), { once: true });
     dialog.showModal();
+  });
+}
+
+let locks = { items: {}, serials: {} };
+
+async function loadLocks() {
+  try {
+    const response = await fetch(`${API}/locked`, { cache: 'no-store', headers: window.AppAuth.headers() });
+    locks = response.ok ? await response.json() : { items: {}, serials: {} };
+  } catch {
+    locks = { items: {}, serials: {} };
+  }
+}
+
+function showLocked(state, name) {
+  const billed = state === 'billed';
+  $('lockTitle').textContent = billed ? 'Produit facturé' : 'Produit validé';
+  $('lockMessage').textContent = billed
+    ? `« ${name} » est lié à des délivrances facturées : il ne peut plus être modifié ni supprimé.`
+    : `« ${name} » est lié à des délivrances validées : il ne peut plus être modifié ni supprimé.\nUn administrateur peut d’abord rouvrir ces délivrances dans les statistiques.`;
+  const dialog = $('lockDialog');
+  $('lockOk').onclick = () => dialog.close();
+  dialog.showModal();
+}
+
+// Un bouton verrouillé reste visible mais explique pourquoi l'action est refusée.
+function lockButtons(state, name, ...buttons) {
+  buttons.forEach((button) => {
+    button.classList.add('is-locked');
+    button.title = state === 'billed' ? 'Verrouillé : délivrance facturée' : 'Verrouillé : délivrance validée';
+    button.addEventListener('click', (event) => {
+      event.stopImmediatePropagation();
+      showLocked(state, name);
+    }, true);
   });
 }
 
@@ -209,6 +291,8 @@ function updateAuthState() {
   const canManageStock = signedIn && ['admin', 'superadmin'].includes(currentUser.role);
   $('stockFormCard').hidden = !canManageStock;
   $('actionsHeader').hidden = !canManageStock;
+  $('selectHeader').hidden = !canManageStock;
+  $('bulkPrice').hidden = !canManageStock;
   $('withdrawalHistoryCard').hidden = !canManageStock;
   $('qrAdditionHistoryCard').hidden = !canManageStock;
   $('qrUnitActionsHeader').hidden = !canManageStock;
@@ -248,6 +332,131 @@ function logout() {
   $('pageStatus').className = 'status';
 }
 
+const ICONS = {
+  edit: '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>',
+  trash: '<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 10v6M14 10v6"/>',
+  copy: '<rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/>',
+  euro: '<path d="M17 7.5A5 5 0 0 0 12.5 5C9.5 5 8 7 8 9.5v5C8 17 9.5 19 12.5 19A5 5 0 0 0 17 16.5"/><path d="M6 11h8M6 14h8"/>'
+};
+
+function setIcon(button, label, icon, tone) {
+  button.className = `btn ${tone} small icon-only`;
+  button.title = label;
+  button.setAttribute('aria-label', label);
+  button.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[icon]}</svg>`;
+}
+
+let currentPrices = {};
+let priceItem = null;
+let editingPriceId = null;
+const selectedItems = new Set();
+let visibleItemIds = [];
+
+function updateSelection() {
+  $('bulkCount').textContent = selectedItems.size;
+  $('bulkPrice').disabled = selectedItems.size === 0;
+  $('selectAll').checked = visibleItemIds.length > 0 && visibleItemIds.every((id) => selectedItems.has(id));
+}
+
+function setPriceEditing(id) {
+  editingPriceId = id;
+  $('priceSave').textContent = id ? 'Mettre à jour le prix' : 'Enregistrer le prix';
+  $('priceCancelEdit').hidden = !id;
+}
+const eur = (value) => Number(value).toLocaleString('fr-BE', { style: 'currency', currency: 'EUR' });
+const priceLabel = (itemId) => (currentPrices[itemId] === undefined ? '—' : eur(currentPrices[itemId]));
+
+async function loadCurrentPrices() {
+  try {
+    const response = await fetch(`${API}/prices/current`, { cache: 'no-store', headers: window.AppAuth.headers() });
+    currentPrices = response.ok ? await response.json() : {};
+  } catch {
+    currentPrices = {};
+  }
+}
+
+async function loadPriceHistory() {
+  const response = await fetch(`${API}/${priceItem.id}/prices`, { cache: 'no-store', headers: window.AppAuth.headers() });
+  const prices = response.ok ? await response.json() : [];
+  const body = $('priceRows');
+  body.replaceChildren();
+  $('priceEmpty').hidden = prices.length > 0;
+  const today = localDateValue();
+  prices.forEach((entry) => {
+    const row = document.createElement('tr');
+    const active = entry.valid_from <= today && (!entry.valid_to || entry.valid_to >= today);
+    const state = active ? 'En cours' : (entry.valid_from > today ? 'À venir' : 'Terminé');
+    [eur(entry.price), dateValue(entry.valid_from), entry.valid_to ? dateValue(entry.valid_to) : 'Sans fin', state]
+      .forEach((value) => { const cell = document.createElement('td'); cell.textContent = value; row.append(cell); });
+    const actionCell = document.createElement('td');
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'btn light small icon-only';
+    remove.title = 'Supprimer cette ligne de prix';
+    remove.setAttribute('aria-label', 'Supprimer cette ligne de prix');
+    remove.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></svg>';
+    remove.addEventListener('click', async () => {
+      const result = await fetch(`${API}/prices/${entry.id}`, { method: 'DELETE', headers: window.AppAuth.headers() });
+      if (!result.ok) { showStatus($('priceStatus'), 'Suppression impossible.', 'error'); return; }
+      await loadCurrentPrices();
+      renderStock();
+      await loadPriceHistory();
+    });
+    const edit = document.createElement('button');
+    edit.type = 'button';
+    setIcon(edit, 'Modifier ce prix', 'edit', 'light');
+    edit.addEventListener('click', () => {
+      setPriceEditing(entry.id);
+      $('priceValue').value = entry.price;
+      $('priceFrom').value = entry.valid_from;
+      $('priceTo').value = entry.valid_to || '';
+      $('priceStatus').className = 'status';
+      $('priceValue').focus();
+    });
+    actionCell.className = 'actions-cell';
+    actionCell.append(edit, ' ', remove);
+    row.append(actionCell);
+    body.append(row);
+  });
+}
+
+async function openPrices(item) {
+  priceItem = item;
+  setPriceEditing(null);
+  $('priceTitle').textContent = `Prix : ${item.denomination}`;
+  $('priceValue').value = '';
+  $('priceFrom').value = localDateValue();
+  $('priceTo').value = '';
+  $('priceStatus').className = 'status';
+  $('priceDialog').showModal();
+  await loadPriceHistory();
+}
+
+async function savePrice(event) {
+  event.preventDefault();
+  const body = { price: Number($('priceValue').value.replace(',', '.')), valid_from: $('priceFrom').value, valid_to: $('priceTo').value || null };
+  if (!Number.isFinite(body.price) || body.price < 0 || !body.valid_from) {
+    showStatus($('priceStatus'), 'Indiquez un prix valide et une date d’application.', 'error');
+    return;
+  }
+  const url = editingPriceId ? `${API}/prices/${editingPriceId}` : `${API}/${priceItem.id}/prices`;
+  const response = await fetch(url, {
+    method: editingPriceId ? 'PUT' : 'POST',
+    headers: window.AppAuth.headers({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(body)
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    showStatus($('priceStatus'), typeof result.detail === 'string' ? result.detail : `Enregistrement impossible : HTTP ${response.status}`, 'error');
+    return;
+  }
+  $('priceValue').value = '';
+  $('priceTo').value = '';
+  await loadCurrentPrices();
+  renderStock();
+  $('priceDialog').close();
+}
+
 function renderStock() {
   const query = $('search').value.trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   const filtered = stockItems.filter((item) =>
@@ -261,15 +470,28 @@ function renderStock() {
   if (!filtered.length) {
     $('emptyState').textContent = stockItems.length ? 'Aucun article ne correspond à la recherche.' : 'Aucun article en stock.';
   }
+  visibleItemIds = filtered.map((item) => item.id);
   filtered.forEach((item) => {
     const row = document.createElement('tr');
+    if (['admin', 'superadmin'].includes(currentUser?.role)) {
+      const selectCell = document.createElement('td');
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.checked = selectedItems.has(item.id);
+      box.setAttribute('aria-label', `Sélectionner ${item.denomination}`);
+      box.addEventListener('change', () => {
+        if (box.checked) selectedItems.add(item.id); else selectedItems.delete(item.id);
+        updateSelection();
+      });
+      selectCell.append(box);
+      row.append(selectCell);
+    }
     const values = [
       item.denomination,
       item.quantity,
       qrUnits.filter((unit) => unit.stock_item_id === item.id).length,
-      item.code_barres || '—',
-      dateValue(item.entry_date),
-      item.numero_lot || '—',
+      priceLabel(item.id),
+      item.entry_date ? dateValue(item.entry_date) : '—',
     ];
     values.forEach((value, index) => {
       const cell = document.createElement('td');
@@ -277,13 +499,6 @@ function renderStock() {
       if (index === 1) cell.className = 'quantity';
       row.append(cell);
     });
-    const expiryCell = document.createElement('td');
-    expiryCell.textContent = dateValue(item.expiration_date);
-    if (item.expiration_date && item.expiration_date < localDateValue()) {
-      expiryCell.className = 'expired';
-      expiryCell.title = 'Article périmé';
-    }
-    row.append(expiryCell);
     if (['admin', 'superadmin'].includes(currentUser?.role)) {
       const actionsCell = document.createElement('td');
       actionsCell.className = 'actions-cell';
@@ -291,25 +506,29 @@ function renderStock() {
       actions.className = 'actions';
       const editButton = document.createElement('button');
       editButton.type = 'button';
-      editButton.className = 'btn secondary small';
-      editButton.textContent = 'Modifier';
+      setIcon(editButton, 'Modifier', 'edit', 'secondary');
       editButton.addEventListener('click', () => editItem(item));
       const deleteButton = document.createElement('button');
       deleteButton.type = 'button';
-      deleteButton.className = 'btn danger small';
-      deleteButton.textContent = 'Supprimer';
+      setIcon(deleteButton, 'Supprimer', 'trash', 'danger');
       deleteButton.addEventListener('click', () => deleteItem(item));
       const duplicateButton = document.createElement('button');
       duplicateButton.type = 'button';
-      duplicateButton.className = 'btn light small';
-      duplicateButton.textContent = 'Dupliquer';
+      setIcon(duplicateButton, 'Dupliquer', 'copy', 'light');
       duplicateButton.addEventListener('click', () => duplicateItem(item));
-      actions.append(editButton, duplicateButton, deleteButton);
+      const priceButton = document.createElement('button');
+      priceButton.type = 'button';
+      setIcon(priceButton, 'Gérer le prix', 'euro', 'light');
+      priceButton.addEventListener('click', () => openPrices(item));
+      const itemLock = locks.items[String(item.id)];
+      if (itemLock) lockButtons(itemLock, item.denomination, deleteButton);
+      actions.append(editButton, duplicateButton, priceButton, deleteButton);
       actionsCell.append(actions);
       row.append(actionsCell);
     }
     $('stockRows').append(row);
   });
+  updateSelection();
 }
 
 async function loadStock() {
@@ -327,6 +546,7 @@ async function loadStock() {
     }
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     stockItems = await response.json();
+    await Promise.all([loadCurrentPrices(), loadLocks()]);
     renderStock();
     showStatus($('pageStatus'), `${stockItems.length} article(s) en stock.`, 'success');
     const historyLoads = ['admin', 'superadmin'].includes(currentUser?.role)
@@ -378,15 +598,18 @@ function renderQrUnits() {
       actionsCell.className = 'actions-cell';
       const editButton = document.createElement('button');
       editButton.type = 'button';
-      editButton.className = 'btn secondary small';
-      editButton.textContent = 'Modifier';
+      setIcon(editButton, 'Modifier', 'edit', 'secondary');
       editButton.addEventListener('click', () => editQrUnit(unit));
       const deleteButton = document.createElement('button');
       deleteButton.type = 'button';
-      deleteButton.className = 'btn danger small';
-      deleteButton.textContent = 'Supprimer';
+      setIcon(deleteButton, 'Supprimer', 'trash', 'danger');
       deleteButton.addEventListener('click', () => deleteQrUnit(unit));
-      actionsCell.append(editButton, deleteButton);
+      const unitActions = document.createElement('div');
+      unitActions.className = 'actions';
+      const unitLock = locks.serials[String(unit.numero_serie).trim()];
+      if (unitLock) lockButtons(unitLock, unit.denomination, editButton, deleteButton);
+      unitActions.append(editButton, deleteButton);
+      actionsCell.append(unitActions);
       row.append(actionsCell);
     }
     $('qrUnitRows').append(row);
@@ -535,7 +758,7 @@ async function saveItem(event) {
   const payload = {
     denomination: $('denomination').value.trim(),
     quantity: Number($('quantity').value),
-    entry_date: $('entryDate').value,
+    entry_date: $('entryDate').value || localDateValue(),
     code_barres: $('codeBarres').value.trim() || null,
     numero_lot: $('numeroLot').value.trim() || null,
     expiration_date: $('expirationDate').value || null
@@ -727,6 +950,47 @@ async function initialize() {
 }
 
 initialize();
+$('priceForm').addEventListener('submit', savePrice);
+$('priceCancelEdit').addEventListener('click', () => {
+  setPriceEditing(null);
+  $('priceValue').value = '';
+  $('priceFrom').value = localDateValue();
+  $('priceTo').value = '';
+});
+$('selectAll').addEventListener('change', () => {
+  visibleItemIds.forEach((id) => { if ($('selectAll').checked) selectedItems.add(id); else selectedItems.delete(id); });
+  renderStock();
+});
+$('bulkPrice').addEventListener('click', () => {
+  $('bulkInfo').textContent = `${selectedItems.size} article(s) sélectionné(s). Le prix s’applique à tous, avec les mêmes règles de dates que pour un article.`;
+  $('bulkValue').value = '';
+  $('bulkFrom').value = localDateValue();
+  $('bulkTo').value = '';
+  $('bulkStatus').className = 'status';
+  $('bulkDialog').showModal();
+});
+$('bulkForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const body = { item_ids: [...selectedItems], price: Number($('bulkValue').value.replace(',', '.')), valid_from: $('bulkFrom').value, valid_to: $('bulkTo').value || null };
+  if (!Number.isFinite(body.price) || body.price < 0 || !body.valid_from) {
+    showStatus($('bulkStatus'), 'Indiquez un prix valide et une date d’application.', 'error');
+    return;
+  }
+  const response = await fetch(`${API}/prices/bulk`, {
+    method: 'POST',
+    headers: window.AppAuth.headers({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(body)
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    showStatus($('bulkStatus'), typeof result.detail === 'string' ? result.detail : `Enregistrement impossible : HTTP ${response.status}`, 'error');
+    return;
+  }
+  selectedItems.clear();
+  await loadCurrentPrices();
+  renderStock();
+  $('bulkDialog').close();
+});
 </script>
 </body>
 </html>

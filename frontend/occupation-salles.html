@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f4c81">
+  <title>Occupation des salles</title>
+  <style>
+    :root{--primary:#0f4c81;--primary-dark:#0a365c;--bg:#eef2f7;--text:#1f2937;--muted:#64748b;--border:#dbe3ec}
+    *{box-sizing:border-box}body{margin:0;padding:16px;background:var(--bg);color:var(--text);font-family:Arial,sans-serif}
+    .container{max-width:1200px;margin:auto}.card{margin-bottom:16px;padding:20px;background:#fff;border-radius:16px;box-shadow:0 6px 22px rgba(15,76,129,.08)}
+    h1{margin:0 0 6px;color:var(--primary);font-size:28px}h2{margin:0 0 12px}.muted{color:var(--muted)}
+    .header,.toolbar,.auth-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.header,.toolbar,.auth-bar{justify-content:space-between}
+    .btn{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:10px 14px;border:0;border-radius:10px;background:var(--primary);color:#fff;font-weight:700;text-decoration:none;cursor:pointer}
+    .btn:hover{background:var(--primary-dark)}.btn.light{background:#fff;color:var(--text);border:1px solid var(--border)}
+    .login-grid{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end;margin-top:16px}
+    .field{min-width:0}.field label{display:block;margin:0 0 6px;font-size:14px;font-weight:700}
+    .field input,.field select{width:100%;min-height:44px;padding:10px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;font:inherit}
+    .filters{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;align-items:end}
+    .tool-icons{display:flex;gap:8px}.tool-btn{display:inline-flex;align-items:center;justify-content:center;width:46px;height:46px;border:1px solid var(--border);border-radius:12px;background:#fff;color:var(--primary);cursor:pointer}
+    .tool-btn:hover{background:#eff6ff;border-color:#93c5fd}.tool-btn:focus-visible{outline:3px solid #93c5fd;outline-offset:2px}
+    .kpis{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px;margin:18px 0}
+    .kpi{padding:14px;border:1px solid var(--border);border-radius:12px;background:#f8fafc}.kpi strong{display:block;font-size:26px;color:var(--primary)}.kpi span{color:var(--muted);font-size:13px}
+    .status{display:none;margin-top:14px;padding:12px;border-radius:10px;line-height:1.4}.status.info{display:block;background:#dbeafe;color:#1e40af}.status.success{display:block;background:#dcfce7;color:#166534}.status.error{display:block;background:#fee2e2;color:#991b1b}
+    .table-wrap{overflow:auto;border:1px solid var(--border);border-radius:12px}table{width:100%;min-width:640px;border-collapse:collapse}th,td{padding:11px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:middle}th{background:var(--primary);color:#fff;white-space:nowrap}
+    td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}.group-row td{background:#eff6ff;font-weight:700;color:var(--primary)}.sub td:first-child{padding-left:30px}
+    .bar{display:inline-block;height:8px;border-radius:4px;background:#93c5fd;vertical-align:middle;margin-left:8px}
+    .occ-bar{display:inline-block;width:120px;height:10px;border-radius:5px;background:#e2e8f0;vertical-align:middle;overflow:hidden}.occ-bar i{display:block;height:100%;background:#0f4c81}
+    .swatch{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:8px;vertical-align:-1px}
+    .heat{border-collapse:separate;border-spacing:2px;min-width:0;width:auto}.heat th{background:none;color:var(--muted);font-size:12px;padding:2px 6px;font-weight:600}.heat td{width:34px;height:28px;padding:0;border:0;border-radius:4px;text-align:center;font-size:11px;color:#0f172a}
+    .multi{position:relative}.multi summary{min-height:44px;padding:11px 10px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;cursor:pointer;list-style:none}.multi summary::after{content:'▾';float:right;color:var(--muted)}
+    .multi-list{position:absolute;z-index:20;left:0;right:0;max-height:260px;overflow:auto;margin-top:4px;padding:6px;border:1px solid var(--border);border-radius:10px;background:#fff;box-shadow:0 8px 24px rgba(15,76,129,.18)}
+    .multi-list label{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:6px;font-weight:400;cursor:pointer}.multi-list label:hover{background:#eff6ff}.multi-list input{width:auto;min-height:0}.multi-all{font-weight:700!important;border-bottom:1px solid var(--border);margin-bottom:4px}
+    .kpis.three{grid-template-columns:repeat(3,minmax(0,1fr))}
+    .empty{text-align:center;padding:30px;color:var(--muted)}[hidden]{display:none!important}
+    @media(max-width:760px){.filters{grid-template-columns:1fr 1fr}.kpis{grid-template-columns:1fr 1fr}}
+    @media(max-width:600px){body{padding:10px}.card{padding:15px}.login-grid,.filters{grid-template-columns:1fr}.login-grid .btn{width:100%}}
+  </style>
+  <link rel="stylesheet" href="app-shell.css">
+  <script src="app-navigation.js" defer></script>
+</head>
+<body data-auth-required="true">
+<main class="container">
+  <section class="card">
+    <div class="header">
+      <div><h1>Occupation des salles</h1><div class="muted">Rendez-vous planifiés par rapport aux plages ouvertes de chaque salle.</div></div>
+    </div>
+    <div id="authBar" class="auth-bar" hidden>
+      <strong id="signedInAs"></strong>
+      <button id="logoutButton" class="btn light" type="button">Déconnexion</button>
+    </div>
+    <form id="loginForm" class="login-grid">
+      <div class="field"><label for="loginUsername">Utilisateur</label><input id="loginUsername" autocomplete="username" required></div>
+      <div class="field"><label for="loginPassword">Mot de passe</label><input id="loginPassword" type="password" autocomplete="current-password" required></div>
+      <button id="loginButton" class="btn" type="submit">Connexion</button>
+    </form>
+    <div id="authStatus" class="status" aria-live="polite"></div>
+  </section>
+
+
+  <section id="occupation" class="card" hidden>
+    <div class="toolbar">
+      <h2>Occupation des salles</h2>
+      <div class="tool-icons" role="group" aria-label="Actions occupation">
+        <button id="occExport" class="tool-btn" type="button" title="Exporter l’occupation (CSV)" aria-label="Exporter l’occupation (CSV)">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12M7 10l5 5 5-5"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+        </button>
+      </div>
+    </div>
+    <p class="muted">Rendez-vous planifiés (hors annulés et reportés) comparés aux plages de rendez-vous ouvertes de chaque salle.</p>
+    <div class="filters" style="margin-top:14px">
+      <div class="field"><label for="occFrom">Du</label><input id="occFrom" type="date"></div>
+      <div class="field"><label for="occTo">Au</label><input id="occTo" type="date"></div>
+      <div class="field"><label id="occRoomLabel">Salles</label><details id="occRoom" class="multi"><summary id="occRoomSummary">Toutes les salles</summary><div class="multi-list"><label class="multi-all"><input type="checkbox" id="occRoomAll" checked> Toutes les salles</label><div id="occRoomList"></div></div></details></div>
+    </div>
+    <div class="kpis three" aria-live="polite">
+      <div class="kpi"><strong id="oRdv">0</strong><span>Rendez-vous</span></div>
+      <div class="kpi"><strong id="oHours">0 h</strong><span>Heures planifiées</span></div>
+      <div class="kpi"><strong id="oRate">—</strong><span>Taux d’occupation global</span></div>
+    </div>
+    <div id="occStatus" class="status" aria-live="polite"></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Salle</th><th class="num">Rendez-vous</th><th class="num">Annulés / reportés</th><th class="num">Absents</th><th class="num">Planifié</th><th class="num">Ouvert</th><th>Occupation</th></tr></thead>
+        <tbody id="occRows"></tbody>
+      </table>
+      <div id="occEmpty" class="empty" hidden>Aucune salle active.</div>
+    </div>
+    <h3 style="margin:20px 0 8px">Charge par jour et par heure</h3>
+    <div class="table-wrap" style="padding:8px"><table id="occHeat" class="heat"></table></div>
+  </section>
+</main>
+<script src="auth.js"></script>
+<script>
+'use strict';
+
+const API = `${window.AppAuth.API_BASE}/api`;
+const $ = (id) => document.getElementById(id);
+let currentUser = window.AppAuth.user();
+
+function showStatus(element, message, type = 'info') {
+  element.textContent = message;
+  element.className = `status ${type}`;
+}
+
+function updateAuthState() {
+  const signedIn = Boolean(currentUser);
+  const allowed = signedIn && window.AppAuth.canUseAgenda(currentUser);
+  $('loginForm').hidden = signedIn;
+  $('authBar').hidden = !signedIn;
+  $('occupation').hidden = !allowed;
+  $('signedInAs').textContent = signedIn ? `Connecté : ${currentUser.username}` : '';
+  if (signedIn && !allowed) showStatus($('authStatus'), 'Cet écran nécessite l’accès à l’agenda.', 'error');
+}
+
+async function api(path, query) {
+  const response = await fetch(`${API}${path}?${query}`, { headers: window.AppAuth.headers() });
+  if (response.status === 401) {
+    logout('Session expirée. Connectez-vous à nouveau.');
+    throw new Error('Session expirée.');
+  }
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(typeof body.detail === 'string' ? body.detail : `HTTP ${response.status}`);
+  return body;
+}
+
+function cell(text, className) {
+  const td = document.createElement('td');
+  td.textContent = text;
+  if (className) td.className = className;
+  return td;
+}
+
+function csvEscape(value) {
+  const text = value === null || value === undefined ? '' : String(value);
+  return /[";\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function download(name, lines) {
+  const blob = new Blob(['\uFEFF' + lines.map((line) => line.map(csvEscape).join(';')).join('\r\n')], { type: 'text/csv;charset=utf-8' });
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = `${name}-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+
+const hours = (minutes) => `${(minutes / 60).toLocaleString('fr-BE', { maximumFractionDigits: 1 })} h`;
+let occ = null;
+let occReady = false;
+
+let pickedRooms = new Set();
+
+function selectedRooms() {
+  return [...document.querySelectorAll('#occRoomList input:checked')].map((box) => box.value);
+}
+
+function updateRoomSummary() {
+  const boxes = [...document.querySelectorAll('#occRoomList input')];
+  const picked = boxes.filter((box) => box.checked);
+  $('occRoomAll').checked = picked.length === 0 || picked.length === boxes.length;
+  $('occRoomSummary').textContent = picked.length === 0 || picked.length === boxes.length
+    ? 'Toutes les salles'
+    : picked.length === 1 ? picked[0].dataset.name : `${picked.length} salles`;
+}
+
+function buildRoomList(rooms) {
+  const list = $('occRoomList');
+  if (list.children.length === rooms.length && list.children.length) return;
+  list.replaceChildren();
+  rooms.forEach((r) => {
+    const label = document.createElement('label');
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.value = r.id;
+    box.dataset.name = r.name;
+    label.append(box, ` ${r.name}`);
+    list.append(label);
+  });
+  updateRoomSummary();
+}
+
+function occParams() {
+  const query = new URLSearchParams();
+  if ($('occFrom').value) query.set('date_from', $('occFrom').value);
+  if ($('occTo').value) query.set('date_to', $('occTo').value);
+  const picked = selectedRooms();
+  if (picked.length) query.set('room', picked.join(','));
+  return query;
+}
+
+function renderOccupancy() {
+  const { salles, totaux, heatmap, rooms } = occ;
+  if (!occReady) {
+    $('occFrom').value = occ.date_from;
+    $('occTo').value = occ.date_to;
+    occReady = true;
+  }
+  buildRoomList(rooms);
+  $('oRdv').textContent = totaux.rendez_vous;
+  $('oHours').textContent = hours(totaux.minutes_planifiees);
+  $('oRate').textContent = totaux.taux === null ? '—' : `${totaux.taux.toLocaleString('fr-BE')} %`;
+  $('occEmpty').hidden = salles.length > 0;
+  const body = $('occRows');
+  body.replaceChildren();
+  salles.forEach((r) => {
+    const tr = document.createElement('tr');
+    const name = cell(r.salle);
+    const swatch = document.createElement('span');
+    swatch.className = 'swatch';
+    swatch.style.background = r.couleur;
+    name.prepend(swatch);
+    const rate = document.createElement('td');
+    if (r.taux === null) {
+      rate.textContent = 'Aucune plage définie';
+      rate.className = 'muted';
+    } else {
+      const bar = document.createElement('span');
+      bar.className = 'occ-bar';
+      const fill = document.createElement('i');
+      fill.style.width = `${Math.min(100, r.taux)}%`;
+      bar.append(fill);
+      rate.append(bar, ` ${r.taux.toLocaleString('fr-BE')} %`);
+    }
+    tr.append(name, cell(r.rendez_vous, 'num'), cell(r.annules, 'num'), cell(r.absents, 'num'),
+      cell(hours(r.minutes_planifiees), 'num'), cell(r.minutes_ouvertes === null ? '—' : hours(r.minutes_ouvertes), 'num'), rate);
+    body.append(tr);
+  });
+  const days = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+  const max = Math.max(1, ...heatmap.flat());
+  const used = [...Array(24).keys()].filter((h) => heatmap.some((row) => row[h] > 0));
+  const shown = used.length ? Array.from({ length: used[used.length - 1] - used[0] + 1 }, (_, i) => used[0] + i) : [];
+  const table = $('occHeat');
+  table.replaceChildren();
+  if (!shown.length) {
+    const row = table.insertRow();
+    const empty = row.insertCell();
+    empty.className = 'muted';
+    empty.textContent = 'Aucun rendez-vous sur la période.';
+    return;
+  }
+  const head = table.insertRow();
+  head.append(document.createElement('th'));
+  shown.forEach((h) => { const th = document.createElement('th'); th.textContent = `${h} h`; head.append(th); });
+  days.forEach((label, d) => {
+    const row = table.insertRow();
+    const th = document.createElement('th');
+    th.textContent = label;
+    row.append(th);
+    shown.forEach((h) => {
+      const minutes = heatmap[d][h];
+      const td = row.insertCell();
+      td.style.background = minutes ? `rgba(15,76,129,${(0.12 + 0.88 * minutes / max).toFixed(2)})` : '#f1f5f9';
+      if (minutes / max > 0.55) td.style.color = '#fff';
+      td.textContent = minutes ? Math.round(minutes / 6) / 10 : '';
+      td.title = `${label} ${h} h : ${minutes} min planifiées`;
+    });
+  });
+}
+
+async function loadOccupancy() {
+  if (!currentUser || !window.AppAuth.canUseAgenda(currentUser)) return;
+  try {
+    occ = await api('/stats/rooms/occupancy', occParams());
+    renderOccupancy();
+    $('occStatus').className = 'status';
+  } catch (error) {
+    showStatus($('occStatus'), `Occupation indisponible : ${error.message}`, 'error');
+  }
+}
+
+function exportOccupancy() {
+  if (!occ) return;
+  const lines = [['Salle', 'Rendez-vous', 'Annulés/reportés', 'Absents', 'Minutes planifiées', 'Minutes ouvertes', 'Taux (%)']];
+  occ.salles.forEach((r) => lines.push([r.salle, r.rendez_vous, r.annules, r.absents, r.minutes_planifiees,
+    r.minutes_ouvertes ?? '', r.taux === null ? '' : String(r.taux).replace('.', ',')]));
+  download('occupation-salles', lines);
+}
+
+function logout(message = 'Session fermée.') {
+  window.AppAuth.logout();
+  currentUser = null;
+  updateAuthState();
+  showStatus($('authStatus'), message, 'info');
+}
+
+async function login(event) {
+  event.preventDefault();
+  $('loginButton').disabled = true;
+  try {
+    currentUser = await window.AppAuth.login($('loginUsername').value.trim(), $('loginPassword').value);
+    $('loginPassword').value = '';
+    updateAuthState();
+    showStatus($('authStatus'), 'Connexion réussie.', 'success');
+    await loadOccupancy();
+  } catch (error) {
+    showStatus($('authStatus'), `Connexion impossible : ${error.message}`, 'error');
+  } finally {
+    $('loginButton').disabled = false;
+  }
+}
+
+$('loginForm').addEventListener('submit', login);
+$('logoutButton').addEventListener('click', () => logout());
+['occFrom', 'occTo'].forEach((id) => $(id).addEventListener('change', loadOccupancy));
+$('occRoomAll').addEventListener('change', () => {
+  document.querySelectorAll('#occRoomList input').forEach((box) => { box.checked = false; });
+  updateRoomSummary();
+  loadOccupancy();
+});
+$('occRoomList').addEventListener('change', () => {
+  updateRoomSummary();
+  loadOccupancy();
+});
+document.addEventListener('click', (event) => { if (!$('occRoom').contains(event.target)) $('occRoom').open = false; });
+$('occExport').addEventListener('click', exportOccupancy);
+
+updateAuthState();
+if (currentUser) {
+  fetch(`${API}/auth/me`, { headers: window.AppAuth.headers() }).then((response) => {
+    if (response.status === 401) logout('Session expirée. Connectez-vous à nouveau.');
+    else loadOccupancy();
+  }).catch(() => loadOccupancy());
+} else {
+  showStatus($('authStatus'), 'Connectez-vous pour consulter l’occupation des salles.', 'info');
+}
+</script>
+</body>
+</html>

@@ -2255,6 +2255,10 @@
       go.type = "button";
       go.addEventListener("click", () => {
         cursor = startOfDay(start);
+        clearPicks(document.querySelector("#roomFilter"));
+        clearPicks(document.querySelector("#doctorFilter"));
+        groupFilter().value = "";
+        localStorage.removeItem("calendarGroup");
         patientDialog.close();
         setView("day");
       });

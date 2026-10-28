@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f4c81">
+  <title>Réservation en ligne</title>
+  <style>
+    :root{--primary:#0f4c81;--primary2:#0a365c;--bg:#eef2f7;--card:#fff;--text:#1f2937;--muted:#64748b;--border:#dbe3ec;--danger:#b91c1c}
+    *{box-sizing:border-box} body{margin:0;padding:16px;background:var(--bg);color:var(--text);font-family:Arial,sans-serif}
+    .container{max-width:1200px;margin:auto}.card{background:var(--card);border-radius:16px;padding:20px;margin-bottom:16px;box-shadow:0 6px 22px rgba(15,76,129,.08)}
+    h1{margin:0 0 6px;color:var(--primary);font-size:28px}h2{margin:0 0 12px;color:var(--primary)}.muted{color:var(--muted)}
+    .header,.actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+    .btn{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:10px 14px;border:0;border-radius:10px;background:var(--primary);color:#fff;font-weight:700;cursor:pointer}
+    .btn:hover{background:var(--primary2)}.btn.secondary{background:#475569}.btn.light{background:#fff;color:var(--text);border:1px solid var(--border)}.btn.danger{background:var(--danger)}.btn:disabled{opacity:.55;cursor:not-allowed}
+    .icon-btn{display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border:1px solid var(--border);border-radius:10px;background:#fff;color:var(--primary);cursor:pointer}
+    .icon-btn:hover{background:#eff6ff;border-color:#93c5fd}.icon-btn.danger{color:var(--danger)}.icon-btn.ok{color:#15803d}
+    .admin-login{display:grid;grid-template-columns:1fr 1fr auto auto;gap:10px;align-items:end;margin-top:16px}
+    .grid{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:12px;align-items:end}.grid .wide{grid-column:span 2}
+    .field label{display:block;margin-bottom:6px;font-weight:700;font-size:14px}.field input,.field select,.field textarea{width:100%;min-height:44px;padding:10px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;font:inherit}
+    .field select[multiple]{min-height:110px}
+    .check{display:flex;align-items:center;gap:8px;font-weight:700;cursor:pointer}.check input{width:20px;height:20px}
+    .status{display:none;margin-top:14px;padding:12px;border-radius:10px}.status.info{display:block;background:#dbeafe;color:#1e40af}.status.success{display:block;background:#dcfce7;color:#166534}.status.error{display:block;background:#fee2e2;color:#991b1b}
+    .table-wrap{overflow:auto;border:1px solid var(--border);border-radius:12px;margin-top:16px}table{width:100%;min-width:760px;border-collapse:collapse}th,td{padding:10px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:middle}th{background:var(--primary);color:#fff;white-space:nowrap}
+    .badge{display:inline-block;margin:2px 4px 2px 0;padding:3px 9px;border-radius:999px;background:#dbeafe;color:#1e40af;font-size:12px;font-weight:700}.badge.off{background:#fee2e2;color:#991b1b}
+    .row-actions{display:flex;gap:6px}.empty{padding:24px;text-align:center;color:var(--muted)}
+    .confirm-dialog{width:min(460px,calc(100% - 32px));padding:22px;border:0;border-radius:16px;background:#fff;color:var(--text);box-shadow:0 18px 50px rgba(15,23,42,.25)}
+    .confirm-dialog::backdrop{background:rgba(15,23,42,.55)}.confirm-dialog h2{font-size:20px}.confirm-dialog p{margin:0;line-height:1.5}.confirm-dialog .actions{justify-content:flex-end;margin-top:20px}
+    [hidden]{display:none!important}
+    @media(max-width:850px){.grid,.admin-login{grid-template-columns:1fr 1fr}}@media(max-width:620px){body{padding:10px}.card{padding:15px}.grid,.admin-login{grid-template-columns:1fr}.grid .wide{grid-column:auto}}
+  </style>
+  <link rel="stylesheet" href="app-shell.css">
+  <script src="app-navigation.js" defer></script>
+  <script src="dialog-close.js" defer></script>
+</head>
+<body data-auth-required="true">
+<div class="container">
+  <section class="card">
+    <div class="header"><div><h1>Réservation en ligne</h1><div class="muted">Portail public de prise de rendez-vous : réglages, plages ouvertes et demandes à confirmer.</div></div></div>
+    <div class="admin-login">
+      <div id="loginUsernameField" class="field"><label for="loginUsername">Utilisateur</label><input id="loginUsername" type="text" autocomplete="username"></div>
+      <div id="loginPasswordField" class="field"><label for="loginPassword">Mot de passe</label><input id="loginPassword" type="password" autocomplete="current-password"></div>
+      <button id="loginButton" class="btn" type="button">Connexion</button>
+      <strong id="signedInAs" hidden></strong>
+      <button id="logoutButton" class="btn secondary" type="button" hidden>Déconnexion</button>
+    </div>
+    <div id="authStatus" class="status"></div>
+  </section>
+
+  <section id="pendingCard" class="card" hidden>
+    <h2>Demandes à confirmer</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Rendez-vous</th><th>Patient</th><th>Contact</th><th>Type / agenda</th><th>Note</th><th>Actions</th></tr></thead>
+        <tbody id="pendingRows"></tbody>
+      </table>
+      <div id="pendingEmpty" class="empty" hidden>Aucune demande en attente.</div>
+    </div>
+    <div id="pendingStatus" class="status"></div>
+  </section>
+
+  <section id="settingsCard" class="card" hidden>
+    <h2>Réglages généraux</h2>
+    <form id="settingsForm">
+      <div class="grid">
+        <div class="field"><label class="check"><input id="enabled" type="checkbox"> Portail ouvert au public</label></div>
+        <div class="field"><label for="minNotice">Délai minimum avant rendez-vous (h)</label><input id="minNotice" type="number" min="0" max="1440" required></div>
+        <div class="field"><label for="maxDays">Horizon de réservation (jours)</label><input id="maxDays" type="number" min="1" max="365" required></div>
+        <div class="field"><label for="cancelNotice">Annulation en ligne jusqu’à (h avant)</label><input id="cancelNotice" type="number" min="0" max="720" required></div>
+        <div class="field"><label for="maxPending">Rendez-vous à venir max. par e-mail</label><input id="maxPending" type="number" min="1" max="20" required></div>
+        <div class="field wide"><label for="introText">Message d’accueil du portail</label><input id="introText" maxlength="1000"></div>
+        <button class="btn" type="submit">Enregistrer</button>
+      </div>
+    </form>
+    <div id="settingsStatus" class="status"></div>
+  </section>
+
+  <section id="rulesCard" class="card" hidden>
+    <h2 id="ruleTitle">Plages ouvertes à la réservation en ligne</h2>
+    <p class="muted">Sans règle, rien n’est réservable. Une règle ouvre un agenda entier, ou seulement un médecin, ou une plage précise ; elle peut limiter les types de rendez-vous.</p>
+    <form id="ruleForm">
+      <input id="ruleId" type="hidden">
+      <div class="grid">
+        <div class="field"><label for="ruleRoom">Agenda (salle) *</label><select id="ruleRoom" required></select></div>
+        <div class="field"><label for="ruleDoctor">Médecin</label><select id="ruleDoctor"></select></div>
+        <div class="field"><label for="ruleBlock">Plage</label><select id="ruleBlock"></select></div>
+        <div class="field"><label for="ruleLabel">Libellé</label><input id="ruleLabel" maxlength="120"></div>
+        <div class="field wide"><label for="ruleTypes">Types de rendez-vous (aucun = tous)</label><select id="ruleTypes" multiple></select></div>
+        <div class="field"><label for="ruleNotice">Délai min. (h, vide = général)</label><input id="ruleNotice" type="number" min="0" max="1440"></div>
+        <div class="field"><label for="ruleDays">Horizon (jours, vide = général)</label><input id="ruleDays" type="number" min="1" max="365"></div>
+        <div class="field"><label class="check"><input id="ruleActive" type="checkbox" checked> Active</label></div>
+        <div class="actions"><button class="btn" type="submit">Enregistrer la règle</button><button id="ruleReset" class="btn light" type="button">Nouvelle règle</button></div>
+      </div>
+    </form>
+    <div id="ruleStatus" class="status"></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Agenda</th><th>Médecin</th><th>Plage</th><th>Types</th><th>Délais</th><th>État</th><th>Actions</th></tr></thead>
+        <tbody id="ruleRows"></tbody>
+      </table>
+      <div id="ruleEmpty" class="empty" hidden>Aucune règle : le portail ne propose aucun créneau.</div>
+    </div>
+  </section>
+</div>
+
+<dialog id="askDialog" class="confirm-dialog" aria-labelledby="askTitle" aria-describedby="askMessage">
+  <h2 id="askTitle">Confirmation</h2>
+  <p id="askMessage"></p>
+  <div class="actions">
+    <button id="askCancel" class="btn light" type="button">Annuler</button>
+    <button id="askOk" class="btn danger" type="button">Confirmer</button>
+  </div>
+</dialog>
+
+<script src="auth.js"></script>
+<script>
+'use strict';
+const API = window.AppAuth.API_BASE;
+const $ = (id) => document.getElementById(id);
+let currentUser = window.AppAuth.user();
+let rooms = [], resources = [], blocks = [], types = [], rules = [];
+const isAdmin = () => ['admin', 'superadmin'].includes(currentUser?.role);
+const DAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+const ICON_EDIT = '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>';
+const ICON_TRASH = '<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 10v6M14 10v6"/>';
+const ICON_OK = '<circle cx="12" cy="12" r="9"/><path d="m8 12.5 3 3 5-6"/>';
+const ICON_NO = '<circle cx="12" cy="12" r="9"/><path d="m9 9 6 6M15 9l-6 6"/>';
+
+function setStatus(id, message, type = 'info') { $(id).textContent = message; $(id).className = `status ${type}`; }
+
+function iconButton(label, path, onclick, extra = '') {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = `icon-btn ${extra}`.trim();
+  button.title = label;
+  button.setAttribute('aria-label', label);
+  button.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`;
+  button.onclick = onclick;
+  return button;
+}
+
+function cell(row, content) {
+  const td = document.createElement('td');
+  if (content instanceof Node) td.append(content); else td.textContent = content ?? '';
+  row.append(td);
+  return td;
+}
+
+function askConfirm(message, title = 'Confirmation', okLabel = 'Confirmer') {
+  const dialog = $('askDialog');
+  $('askTitle').textContent = title;
+  $('askMessage').textContent = message;
+  $('askOk').textContent = okLabel;
+  return new Promise((resolve) => {
+    const finish = (value) => { if (dialog.open) dialog.close(); resolve(value); };
+    $('askCancel').onclick = () => finish(false);
+    $('askOk').onclick = () => finish(true);
+    dialog.addEventListener('cancel', () => resolve(false), { once: true });
+    dialog.showModal();
+  });
+}
+
+async function request(url, options = {}) {
+  const response = await fetch(url, { ...options, headers: window.AppAuth.headers(options.headers) });
+  const result = response.status === 204 ? {} : await response.json().catch(() => ({}));
+  if (response.status === 401) { logout('Session expirée.'); throw new Error('Session expirée.'); }
+  if (!response.ok) {
+    const detail = Array.isArray(result.detail) ? result.detail.map((entry) => entry.msg).join(' ; ') : result.detail;
+    throw new Error(detail || `HTTP ${response.status}`);
+  }
+  return result;
+}
+const sendJson = (method, body) => ({ method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+
+function setAdminState() {
+  const connected = Boolean(window.AppAuth.token() && currentUser);
+  $('loginUsernameField').hidden = connected;
+  $('loginPasswordField').hidden = connected;
+  $('loginButton').hidden = connected;
+  $('logoutButton').hidden = !connected;
+  $('signedInAs').hidden = !connected;
+  $('signedInAs').textContent = connected ? `Connecté : ${currentUser.username}` : '';
+  $('pendingCard').hidden = !connected;
+  $('settingsCard').hidden = !(connected && isAdmin());
+  $('rulesCard').hidden = !(connected && isAdmin());
+}
+
+function logout(message = 'Session fermée.') {
+  window.AppAuth.logout();
+  currentUser = null;
+  setAdminState();
+  setStatus('authStatus', message, 'info');
+}
+
+async function login() {
+  $('loginButton').disabled = true;
+  try {
+    currentUser = await window.AppAuth.login($('loginUsername').value.trim(), $('loginPassword').value);
+    $('loginPassword').value = '';
+    setAdminState();
+    await loadAll();
+  } catch (error) {
+    setStatus('authStatus', `Connexion impossible : ${error.message}`, 'error');
+  } finally {
+    $('loginButton').disabled = false;
+  }
+}
+
+const fmtDate = (iso) => new Date(iso).toLocaleString('fr-BE', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Brussels' });
+const blockLabel = (b) => `${DAYS[b.weekday]} ${String(b.start_time).slice(0, 5)}–${String(b.end_time).slice(0, 5)}${b.label ? ` · ${b.label}` : ''}`;
+
+function fillOptions(select, items, blank) {
+  select.replaceChildren();
+  if (blank !== undefined) select.append(new Option(blank, ''));
+  items.forEach(([value, label]) => select.append(new Option(label, value)));
+}
+
+function refreshBlockOptions() {
+  const room = $('ruleRoom').value;
+  fillOptions($('ruleBlock'), blocks.filter((b) => b.room_id === room).map((b) => [b.id, blockLabel(b)]), 'Toutes les plages');
+}
+
+async function loadPending() {
+  const list = await request(`${API}/api/agenda/online/pending`);
+  const body = $('pendingRows');
+  body.replaceChildren();
+  $('pendingEmpty').hidden = list.length > 0;
+  list.forEach((item) => {
+    const row = document.createElement('tr');
+    cell(row, fmtDate(item.starts_at));
+    cell(row, item.patient);
+    cell(row, [item.email, item.phone].filter(Boolean).join(' · '));
+    cell(row, [item.type, item.room, item.doctor].filter(Boolean).join(' · '));
+    cell(row, item.notes);
+    const actions = document.createElement('div');
+    actions.className = 'row-actions';
+    actions.append(
+      iconButton('Confirmer', ICON_OK, () => decide(item, 'PLANNED'), 'ok'),
+      iconButton('Refuser', ICON_NO, () => decide(item, 'CANCELLED'), 'danger')
+    );
+    cell(row, actions);
+    body.append(row);
+  });
+}
+
+async function decide(item, state) {
+  const accept = state === 'PLANNED';
+  if (!accept && !(await askConfirm(`Refuser la demande de ${item.patient} ? Le patient en sera informé par e-mail.`, 'Refuser la demande', 'Refuser'))) return;
+  try {
+    await request(`${API}/api/agenda/appointments/${item.id}/status`, sendJson('POST', { new_state: state, comment: accept ? 'Confirmé par le secrétariat' : 'Refusé par le secrétariat' }));
+    setStatus('pendingStatus', accept ? 'Rendez-vous confirmé, le patient est prévenu.' : 'Demande refusée.', 'success');
+    await loadPending();
+  } catch (error) {
+    setStatus('pendingStatus', error.message, 'error');
+  }
+}
+
+function renderRules() {
+  const body = $('ruleRows');
+  body.replaceChildren();
+  $('ruleEmpty').hidden = rules.length > 0;
+  rules.forEach((rule) => {
+    const row = document.createElement('tr');
+    cell(row, rule.room);
+    cell(row, rule.doctor || 'Tous');
+    cell(row, rule.block || 'Toutes');
+    cell(row, rule.appointment_type_ids ? rule.appointment_type_ids.map((id) => types.find((t) => t.id === id)?.name || '?').join(', ') : 'Tous');
+    cell(row, `${rule.min_notice_hours ?? 'général'} h / ${rule.max_days_ahead ?? 'général'} j`);
+    const state = document.createElement('span');
+    state.className = `badge${rule.active ? '' : ' off'}`;
+    state.textContent = rule.active ? 'Active' : 'Inactive';
+    cell(row, state);
+    const actions = document.createElement('div');
+    actions.className = 'row-actions';
+    actions.append(
+      iconButton('Modifier', ICON_EDIT, () => editRule(rule)),
+      iconButton('Supprimer', ICON_TRASH, () => removeRule(rule), 'danger')
+    );
+    cell(row, actions);
+    body.append(row);
+  });
+}
+
+function resetRule() {
+  $('ruleForm').reset();
+  $('ruleId').value = '';
+  $('ruleActive').checked = true;
+  $('ruleTitle').textContent = 'Plages ouvertes à la réservation en ligne';
+  refreshBlockOptions();
+}
+
+function editRule(rule) {
+  $('ruleId').value = rule.id;
+  $('ruleRoom').value = rule.room_id;
+  refreshBlockOptions();
+  $('ruleDoctor').value = rule.resource_id || '';
+  $('ruleBlock').value = rule.block_id || '';
+  $('ruleLabel').value = rule.label || '';
+  [...$('ruleTypes').options].forEach((o) => { o.selected = Boolean(rule.appointment_type_ids?.includes(o.value)); });
+  $('ruleNotice').value = rule.min_notice_hours ?? '';
+  $('ruleDays').value = rule.max_days_ahead ?? '';
+  $('ruleActive').checked = rule.active;
+  $('ruleTitle').textContent = 'Modifier la règle';
+  $('ruleForm').scrollIntoView({ behavior: 'smooth' });
+}
+
+async function removeRule(rule) {
+  if (!(await askConfirm('Supprimer cette règle ? Les créneaux correspondants ne seront plus réservables en ligne.', 'Supprimer la règle', 'Supprimer'))) return;
+  try {
+    await request(`${API}/api/agenda/online/rules/${rule.id}`, { method: 'DELETE' });
+    rules = await request(`${API}/api/agenda/online/rules`);
+    renderRules();
+  } catch (error) {
+    setStatus('ruleStatus', error.message, 'error');
+  }
+}
+
+async function loadAll() {
+  setAdminState();
+  try {
+    await loadPending();
+    if (!isAdmin()) return;
+    const [settings, roomList, resourceList, blockList, typeList, ruleList] = await Promise.all([
+      request(`${API}/api/agenda/online/settings`),
+      request(`${API}/api/agenda/rooms`),
+      request(`${API}/api/agenda/resources`),
+      request(`${API}/api/agenda/scheduling-blocks`),
+      request(`${API}/api/agenda/appointment-types`),
+      request(`${API}/api/agenda/online/rules`)
+    ]);
+    rooms = roomList; resources = resourceList.filter((r) => r.kind === 'DOCTOR'); blocks = blockList; types = typeList; rules = ruleList;
+    $('enabled').checked = settings.enabled;
+    $('minNotice').value = settings.min_notice_hours;
+    $('maxDays').value = settings.max_days_ahead;
+    $('cancelNotice').value = settings.cancel_notice_hours;
+    $('maxPending').value = settings.max_pending;
+    $('introText').value = settings.intro_text || '';
+    fillOptions($('ruleRoom'), rooms.map((r) => [r.id, r.name]));
+    fillOptions($('ruleDoctor'), resources.map((r) => [r.id, r.display_name]), 'Tous les médecins');
+    fillOptions($('ruleTypes'), types.filter((t) => t.active !== false).map((t) => [t.id, t.name]));
+    refreshBlockOptions();
+    renderRules();
+  } catch (error) {
+    setStatus('authStatus', error.message, 'error');
+  }
+}
+
+$('ruleRoom').addEventListener('change', refreshBlockOptions);
+$('ruleReset').onclick = resetRule;
+
+$('settingsForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  try {
+    await request(`${API}/api/agenda/online/settings`, sendJson('PUT', {
+      enabled: $('enabled').checked,
+      min_notice_hours: Number($('minNotice').value),
+      max_days_ahead: Number($('maxDays').value),
+      cancel_notice_hours: Number($('cancelNotice').value),
+      max_pending: Number($('maxPending').value),
+      intro_text: $('introText').value.trim() || null
+    }));
+    setStatus('settingsStatus', 'Réglages enregistrés.', 'success');
+  } catch (error) {
+    setStatus('settingsStatus', error.message, 'error');
+  }
+});
+
+$('ruleForm').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const selected = [...$('ruleTypes').selectedOptions].map((o) => o.value);
+  const body = {
+    room_id: $('ruleRoom').value,
+    resource_id: $('ruleDoctor').value || null,
+    block_id: $('ruleBlock').value || null,
+    appointment_type_ids: selected.length ? selected : null,
+    min_notice_hours: $('ruleNotice').value === '' ? null : Number($('ruleNotice').value),
+    max_days_ahead: $('ruleDays').value === '' ? null : Number($('ruleDays').value),
+    label: $('ruleLabel').value.trim() || null,
+    active: $('ruleActive').checked
+  };
+  const id = $('ruleId').value;
+  try {
+    await request(id ? `${API}/api/agenda/online/rules/${id}` : `${API}/api/agenda/online/rules`, sendJson(id ? 'PUT' : 'POST', body));
+    rules = await request(`${API}/api/agenda/online/rules`);
+    renderRules();
+    resetRule();
+    setStatus('ruleStatus', 'Règle enregistrée.', 'success');
+  } catch (error) {
+    setStatus('ruleStatus', error.message, 'error');
+  }
+});
+
+$('loginButton').onclick = login;
+$('loginPassword').addEventListener('keydown', (event) => { if (event.key === 'Enter') login(); });
+$('logoutButton').onclick = () => logout();
+
+(async () => {
+  setAdminState();
+  if (window.AppAuth.token()) {
+    try {
+      currentUser = await request(`${API}/api/auth/me`);
+      await loadAll();
+    } catch { logout('Session expirée.'); }
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f4c81">
+  <title>Médecins et droits</title>
+  <style>
+    :root{--primary:#0f4c81;--primary2:#0a365c;--bg:#eef2f7;--card:#fff;--text:#1f2937;--muted:#64748b;--border:#dbe3ec;--danger:#b91c1c}
+    *{box-sizing:border-box} body{margin:0;padding:16px;background:var(--bg);color:var(--text);font-family:Arial,sans-serif}
+    .container{max-width:1200px;margin:auto}.card{background:var(--card);border-radius:16px;padding:20px;margin-bottom:16px;box-shadow:0 6px 22px rgba(15,76,129,.08)}
+    h1{margin:0 0 6px;color:var(--primary);font-size:28px}h2{margin:0 0 12px;color:var(--primary)}h3{margin:18px 0 8px;font-size:15px;color:var(--primary)}.muted{color:var(--muted)}
+    .header,.actions,.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.header,.toolbar{justify-content:space-between}
+    .btn{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:10px 14px;border:0;border-radius:10px;background:var(--primary);color:#fff;font-weight:700;text-decoration:none;cursor:pointer}
+    .btn:hover{background:var(--primary2)}.btn.secondary{background:#475569}.btn.light{background:#fff;color:var(--text);border:1px solid var(--border)}.btn.danger{background:var(--danger)}.btn:disabled{opacity:.55;cursor:not-allowed}
+    .icon-btn{display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border:1px solid var(--border);border-radius:10px;background:#fff;color:var(--primary);cursor:pointer}
+    .icon-btn:hover{background:#eff6ff;border-color:#93c5fd}.icon-btn.danger{color:var(--danger)}.icon-btn.danger:hover{background:#fef2f2;border-color:#fca5a5}
+    .admin-login{display:grid;grid-template-columns:1fr 1fr auto auto;gap:10px;align-items:end;margin-top:16px}
+    .grid{display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:12px;align-items:end}.grid .wide{grid-column:span 2}
+    .field label{display:block;margin-bottom:6px;font-weight:700;font-size:14px}.field input,.field select{width:100%;min-height:44px;padding:10px;border:1px solid #cbd5e1;border-radius:10px;background:#fff;font:inherit}
+    .rights{display:flex;gap:18px;flex-wrap:wrap;padding:12px;border:1px solid var(--border);border-radius:12px;background:#f8fafc}
+    .check{display:flex;align-items:center;gap:8px;font-size:14px;cursor:pointer}.check input{width:18px;height:18px}
+    .members{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px 14px;max-height:220px;overflow:auto;padding:12px;border:1px solid var(--border);border-radius:12px;background:#f8fafc}
+    .status{display:none;margin-top:14px;padding:12px;border-radius:10px}.status.info{display:block;background:#dbeafe;color:#1e40af}.status.success{display:block;background:#dcfce7;color:#166534}.status.error{display:block;background:#fee2e2;color:#991b1b}
+    .table-wrap{overflow:auto;border:1px solid var(--border);border-radius:12px;margin-top:16px}table{width:100%;min-width:760px;border-collapse:collapse}th,td{padding:10px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:middle}th{background:var(--primary);color:#fff;white-space:nowrap}
+    .badge{display:inline-block;margin:2px 4px 2px 0;padding:3px 9px;border-radius:999px;background:#dbeafe;color:#1e40af;font-size:12px;font-weight:700}.badge.off{background:#fee2e2;color:#991b1b}.badge.ok{background:#dcfce7;color:#166534}
+    .row-actions{display:flex;gap:6px}.empty{padding:24px;text-align:center;color:var(--muted)}
+    .confirm-dialog{width:min(460px,calc(100% - 32px));padding:22px;border:0;border-radius:16px;background:#fff;color:var(--text);box-shadow:0 18px 50px rgba(15,23,42,.25)}
+    .confirm-dialog::backdrop{background:rgba(15,23,42,.55)}.confirm-dialog h2{font-size:20px}.confirm-dialog p{margin:0;line-height:1.5}.confirm-dialog .actions{justify-content:flex-end;margin-top:20px}
+    [hidden]{display:none!important}
+    @media(max-width:850px){.grid,.admin-login{grid-template-columns:1fr 1fr}.members{grid-template-columns:1fr 1fr}}@media(max-width:620px){body{padding:10px}.card{padding:15px}.grid,.admin-login,.members{grid-template-columns:1fr}.grid .wide{grid-column:auto}}
+  </style>
+  <link rel="stylesheet" href="app-shell.css">
+  <script src="app-navigation.js" defer></script>
+  <script src="dialog-close.js" defer></script>
+</head>
+<body data-auth-required="true" data-auth-roles="admin,superadmin">
+<div class="container">
+  <section class="card">
+    <div class="header">
+      <div><h1>Médecins et droits</h1><div class="muted">Liste des médecins (numéros INAMI), groupes et droits d’accès aux statistiques de facturation.</div></div>
+    </div>
+    <div class="admin-login">
+      <div id="loginUsernameField" class="field"><label for="loginUsername">Utilisateur</label><input id="loginUsername" type="text" autocomplete="username"></div>
+      <div id="loginPasswordField" class="field"><label for="loginPassword">Mot de passe</label><input id="loginPassword" type="password" autocomplete="current-password"></div>
+      <button id="loginButton" class="btn" type="button">Connexion</button>
+      <strong id="signedInAs" hidden></strong>
+      <button id="logoutButton" class="btn secondary" type="button" hidden>Déconnexion</button>
+    </div>
+    <div id="authStatus" class="status"></div>
+  </section>
+
+  <section id="doctorCard" class="card" hidden>
+    <h2 id="doctorFormTitle">Médecins</h2>
+    <form id="doctorForm" autocomplete="off">
+      <input id="doctorId" type="hidden">
+      <div class="grid">
+        <div class="field"><label for="inami6">N° INAMI (6 chiffres) *</label><input id="inami6" inputmode="numeric" maxlength="8" required placeholder="123456"></div>
+        <div class="field"><label for="inami11">N° INAMI complet (11 chiffres) *</label><input id="inami11" inputmode="numeric" maxlength="16" required placeholder="12345678901"></div>
+        <div class="field"><label for="nom">Nom *</label><input id="nom" maxlength="120" required></div>
+        <div class="field"><label for="prenom">Prénom *</label><input id="prenom" maxlength="120" required></div>
+        <div class="field"><label for="specialite">Spécialité</label><input id="specialite" maxlength="120"></div>
+        <div class="field"><label for="email">E-mail</label><input id="email" type="email" maxlength="255"></div>
+        <div class="field"><label for="tel">Téléphone</label><input id="tel" type="tel" maxlength="40"></div>
+        <div class="field"><label for="gsm">GSM</label><input id="gsm" type="tel" maxlength="40"></div>
+        <div class="field wide"><label for="adresse">Adresse</label><input id="adresse" maxlength="255"></div>
+        <div class="field"><label for="codePostal">Code postal</label><input id="codePostal" maxlength="20"></div>
+        <div class="field"><label for="ville">Ville</label><input id="ville" maxlength="120"></div>
+        <div class="field wide"><label for="resource">Médecin de l’agenda (libellé des délivrances)</label><select id="resource"></select></div>
+        <div class="field"><label for="active">État</label><select id="active"><option value="true">Actif</option><option value="false">Inactif</option></select></div>
+      </div>
+      <h3>Droits propres au médecin (statistiques)</h3>
+      <div class="rights">
+        <label class="check"><input id="statsAccess" type="checkbox"> Accéder aux statistiques (ses délivrances)</label>
+        <label class="check"><input id="amountsAccess" type="checkbox"> Voir les prix et montants</label>
+        <label class="check"><input id="billingAccess" type="checkbox"> Voir l’état validé / facturé</label>
+      </div>
+      <div class="actions" style="margin-top:12px">
+        <button id="saveDoctor" class="btn" type="submit">Ajouter le médecin</button>
+        <button id="cancelDoctor" class="btn light" type="button" hidden>Annuler la modification</button>
+      </div>
+    </form>
+    <div id="doctorStatus" class="status"></div>
+    <div class="toolbar" style="margin-top:18px"><h2 style="margin:0">Liste des médecins</h2><div class="field" style="min-width:240px"><input id="doctorSearch" type="search" placeholder="Rechercher (nom, INAMI, spécialité…)" aria-label="Rechercher un médecin"></div></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Médecin</th><th>INAMI</th><th>Spécialité</th><th>Contact</th><th>Droits</th><th>Compte</th><th>Actions</th></tr></thead>
+        <tbody id="doctorRows"></tbody>
+      </table>
+      <div id="doctorEmpty" class="empty" hidden>Aucun médecin.</div>
+    </div>
+  </section>
+
+  <section id="groupCard" class="card" hidden>
+    <h2 id="groupFormTitle">Groupes de médecins</h2>
+    <form id="groupForm" autocomplete="off">
+      <input id="groupId" type="hidden">
+      <div class="grid">
+        <div class="field"><label for="groupName">Nom du groupe *</label><input id="groupName" maxlength="120" required></div>
+        <div class="field wide"><label for="groupDescription">Description</label><input id="groupDescription" maxlength="255"></div>
+      </div>
+      <h3>Droits du groupe (statistiques)</h3>
+      <div class="rights">
+        <label class="check"><input id="gStats" type="checkbox"> Accéder aux statistiques</label>
+        <label class="check"><input id="gAmounts" type="checkbox"> Voir les prix et montants</label>
+        <label class="check"><input id="gBilling" type="checkbox"> Voir l’état validé / facturé</label>
+        <label class="check"><input id="gScope" type="checkbox"> Voir les délivrances de tous les médecins du groupe</label>
+      </div>
+      <h3>Membres</h3>
+      <div id="groupMembers" class="members"></div>
+      <div class="actions" style="margin-top:12px">
+        <button id="saveGroup" class="btn" type="submit">Ajouter le groupe</button>
+        <button id="cancelGroup" class="btn light" type="button" hidden>Annuler la modification</button>
+      </div>
+    </form>
+    <div id="groupStatus" class="status"></div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Groupe</th><th>Droits</th><th>Membres</th><th>Actions</th></tr></thead>
+        <tbody id="groupRows"></tbody>
+      </table>
+      <div id="groupEmpty" class="empty" hidden>Aucun groupe.</div>
+    </div>
+  </section>
+</div>
+
+<dialog id="askDialog" class="confirm-dialog" aria-labelledby="askTitle" aria-describedby="askMessage">
+  <h2 id="askTitle">Confirmation</h2>
+  <p id="askMessage"></p>
+  <div class="actions">
+    <button id="askCancel" class="btn light" type="button">Annuler</button>
+    <button id="askOk" class="btn danger" type="button">Supprimer</button>
+  </div>
+</dialog>
+
+<script src="auth.js"></script>
+<script>
+'use strict';
+
+const API_BASE = window.AppAuth.API_BASE;
+const $ = (id) => document.getElementById(id);
+let currentUser = window.AppAuth.user();
+let doctors = [];
+let resources = [];
+let groups = [];
+const isAdmin = () => ['admin', 'superadmin'].includes(currentUser?.role);
+const roleLabel = (role) => (role === 'superadmin' ? 'SuperAdmin' : role === 'admin' ? 'Administrateur' : 'Utilisateur');
+
+const ICON_EDIT = '<path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/>';
+const ICON_TRASH = '<path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 10v6M14 10v6"/>';
+
+function setStatus(id, message, type = 'info') {
+  $(id).textContent = message;
+  $(id).className = `status ${type}`;
+}
+
+function iconButton(label, path, onclick, extra = '') {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = `icon-btn ${extra}`.trim();
+  button.title = label;
+  button.setAttribute('aria-label', label);
+  button.innerHTML = `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${path}</svg>`;
+  button.onclick = onclick;
+  return button;
+}
+
+function badge(text, className = '') {
+  const span = document.createElement('span');
+  span.className = `badge ${className}`.trim();
+  span.textContent = text;
+  return span;
+}
+
+function askConfirm(message, title = 'Confirmation', okLabel = 'Supprimer') {
+  const dialog = $('askDialog');
+  $('askTitle').textContent = title;
+  $('askMessage').textContent = message;
+  $('askOk').textContent = okLabel;
+  return new Promise((resolve) => {
+    const finish = (value) => {
+      if (dialog.open) dialog.close();
+      resolve(value);
+    };
+    $('askCancel').onclick = () => finish(false);
+    $('askOk').onclick = () => finish(true);
+    dialog.addEventListener('cancel', () => resolve(false), { once: true });
+    dialog.showModal();
+  });
+}
+
+async function request(url, options = {}) {
+  const response = await fetch(url, { ...options, headers: window.AppAuth.headers(options.headers) });
+  const result = await response.json().catch(() => ({}));
+  if (response.status === 401) {
+    logout('Session expirée.');
+    throw new Error('Session expirée.');
+  }
+  if (!response.ok) {
+    const detail = Array.isArray(result.detail) ? result.detail.map((entry) => entry.msg).join(' ; ') : result.detail;
+    throw new Error(detail || `HTTP ${response.status}`);
+  }
+  return result;
+}
+
+const sendJson = (method, body) => ({ method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+
+function setAdminState() {
+  const connected = Boolean(window.AppAuth.token() && currentUser);
+  $('loginUsernameField').hidden = connected;
+  $('loginPasswordField').hidden = connected;
+  $('loginButton').hidden = connected;
+  $('logoutButton').hidden = !connected;
+  $('signedInAs').hidden = !connected;
+  $('signedInAs').textContent = connected ? `Connecté : ${currentUser.username} (${roleLabel(currentUser.role)})` : '';
+  const allowed = connected && isAdmin();
+  $('doctorCard').hidden = !allowed;
+  $('groupCard').hidden = !allowed;
+}
+
+function logout(message = 'Session fermée.') {
+  window.AppAuth.logout();
+  currentUser = null;
+  setAdminState();
+  setStatus('authStatus', message, 'info');
+}
+
+async function login() {
+  $('loginButton').disabled = true;
+  try {
+    currentUser = await window.AppAuth.login($('loginUsername').value.trim(), $('loginPassword').value);
+    $('loginPassword').value = '';
+    setAdminState();
+    if (isAdmin()) {
+      setStatus('authStatus', 'Connexion réussie.', 'success');
+      await loadAll();
+    } else {
+      setStatus('authStatus', 'Accès réservé aux administrateurs.', 'error');
+    }
+  } catch (error) {
+    setStatus('authStatus', `Connexion impossible : ${error.message}`, 'error');
+  } finally {
+    $('loginButton').disabled = false;
+  }
+}
+
+const doctorLabel = (doctor) => `${doctor.nom} ${doctor.prenom}`.trim();
+const formatInami = (doctor) => `${doctor.inami6} · ${doctor.inami11}`;
+
+async function loadAll() {
+  if (!isAdmin()) return;
+  try {
+    const [doctorData, groupData] = await Promise.all([
+      request(`${API_BASE}/api/admin/doctors`),
+      request(`${API_BASE}/api/admin/doctor-groups`)
+    ]);
+    doctors = doctorData.doctors;
+    resources = doctorData.resources;
+    groups = groupData;
+    renderResources();
+    renderDoctors();
+    renderMembers();
+    renderGroups();
+  } catch (error) {
+    setStatus('doctorStatus', `Chargement impossible : ${error.message}`, 'error');
+  }
+}
+
+function renderResources(selected = $('resource').value) {
+  const used = new Set(doctors.filter((d) => d.resource_id && String(d.id) !== $('doctorId').value).map((d) => d.resource_id));
+  $('resource').replaceChildren(new Option('Créer automatiquement (Dr Prénom Nom)', ''));
+  resources.filter((r) => !used.has(r.id)).forEach((r) => $('resource').add(new Option(r.display_name, r.id)));
+  $('resource').value = selected;
+}
+
+function normalize(value) {
+  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+}
+
+function renderDoctors() {
+  const query = normalize($('doctorSearch').value);
+  const filtered = doctors.filter((d) => normalize([d.nom, d.prenom, d.inami6, d.inami11, d.specialite, d.email, d.ville].join(' ')).includes(query));
+  $('doctorRows').replaceChildren();
+  $('doctorEmpty').hidden = filtered.length > 0;
+  filtered.forEach((doctor) => {
+    const row = document.createElement('tr');
+    const name = document.createElement('td');
+    const strong = document.createElement('strong');
+    strong.textContent = doctorLabel(doctor);
+    name.append(strong);
+    if (!doctor.active) name.append(' ', badge('Inactif', 'off'));
+    if (doctor.display_name) {
+      const small = document.createElement('div');
+      small.className = 'muted';
+      small.textContent = `Agenda : ${doctor.display_name}`;
+      name.append(small);
+    }
+    const inami = document.createElement('td');
+    inami.textContent = formatInami(doctor);
+    const specialty = document.createElement('td');
+    specialty.textContent = doctor.specialite || '—';
+    const contact = document.createElement('td');
+    contact.textContent = [doctor.email, doctor.tel, doctor.gsm].filter(Boolean).join(' · ') || '—';
+    const rights = document.createElement('td');
+    if (doctor.stats_access) rights.append(badge('Statistiques', 'ok'));
+    if (doctor.amounts_access) rights.append(badge('Montants', 'ok'));
+    if (doctor.billing_access) rights.append(badge('Facturation', 'ok'));
+    (doctor.groups || []).forEach((id) => {
+      const group = groups.find((g) => g.id === id);
+      if (group) rights.append(badge(group.name));
+    });
+    if (!rights.childElementCount) rights.textContent = '—';
+    const account = document.createElement('td');
+    account.textContent = doctor.username || '—';
+    const actions = document.createElement('td');
+    const holder = document.createElement('div');
+    holder.className = 'row-actions';
+    holder.append(
+      iconButton('Modifier', ICON_EDIT, () => editDoctor(doctor)),
+      iconButton('Supprimer', ICON_TRASH, () => deleteDoctor(doctor), 'danger')
+    );
+    actions.append(holder);
+    row.append(name, inami, specialty, contact, rights, account, actions);
+    $('doctorRows').append(row);
+  });
+}
+
+function resetDoctorForm() {
+  $('doctorForm').reset();
+  $('doctorId').value = '';
+  $('doctorFormTitle').textContent = 'Médecins';
+  $('saveDoctor').textContent = 'Ajouter le médecin';
+  $('cancelDoctor').hidden = true;
+  renderResources('');
+}
+
+function editDoctor(doctor) {
+  $('doctorId').value = doctor.id;
+  $('inami6').value = doctor.inami6;
+  $('inami11').value = doctor.inami11;
+  $('nom').value = doctor.nom;
+  $('prenom').value = doctor.prenom;
+  $('specialite').value = doctor.specialite || '';
+  $('email').value = doctor.email || '';
+  $('tel').value = doctor.tel || '';
+  $('gsm').value = doctor.gsm || '';
+  $('adresse').value = doctor.adresse || '';
+  $('codePostal').value = doctor.code_postal || '';
+  $('ville').value = doctor.ville || '';
+  $('active').value = String(doctor.active);
+  $('statsAccess').checked = doctor.stats_access;
+  $('amountsAccess').checked = doctor.amounts_access;
+  $('billingAccess').checked = doctor.billing_access;
+  renderResources('');
+  if (doctor.resource_id) {
+    $('resource').add(new Option(doctor.display_name || 'Médecin de l’agenda', doctor.resource_id));
+    $('resource').value = doctor.resource_id;
+  }
+  $('doctorFormTitle').textContent = `Modifier : ${doctorLabel(doctor)}`;
+  $('saveDoctor').textContent = 'Enregistrer les modifications';
+  $('cancelDoctor').hidden = false;
+  $('doctorForm').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+async function saveDoctor(event) {
+  event.preventDefault();
+  const id = $('doctorId').value;
+  const body = {
+    inami6: $('inami6').value.trim(),
+    inami11: $('inami11').value.trim(),
+    nom: $('nom').value.trim(),
+    prenom: $('prenom').value.trim(),
+    specialite: $('specialite').value.trim() || null,
+    email: $('email').value.trim() || null,
+    tel: $('tel').value.trim() || null,
+    gsm: $('gsm').value.trim() || null,
+    adresse: $('adresse').value.trim() || null,
+    code_postal: $('codePostal').value.trim() || null,
+    ville: $('ville').value.trim() || null,
+    active: $('active').value === 'true',
+    resource_id: $('resource').value || null,
+    stats_access: $('statsAccess').checked,
+    amounts_access: $('amountsAccess').checked,
+    billing_access: $('billingAccess').checked
+  };
+  $('saveDoctor').disabled = true;
+  try {
+    const result = await request(id ? `${API_BASE}/api/admin/doctors/${id}` : `${API_BASE}/api/admin/doctors`, sendJson(id ? 'PUT' : 'POST', body));
+    setStatus('doctorStatus', id ? `Médecin « ${doctorLabel(result)} » mis à jour.` : `Médecin « ${doctorLabel(result)} » ajouté.`, 'success');
+    resetDoctorForm();
+    await loadAll();
+  } catch (error) {
+    setStatus('doctorStatus', `Enregistrement impossible : ${error.message}`, 'error');
+  } finally {
+    $('saveDoctor').disabled = false;
+  }
+}
+
+async function deleteDoctor(doctor) {
+  if (!(await askConfirm(`Supprimer la fiche de « ${doctorLabel(doctor)} » ? Les délivrances déjà enregistrées ne sont pas modifiées.`, 'Supprimer le médecin'))) return;
+  try {
+    await request(`${API_BASE}/api/admin/doctors/${doctor.id}`, { method: 'DELETE' });
+    setStatus('doctorStatus', `Médecin « ${doctorLabel(doctor)} » supprimé.`, 'success');
+    await loadAll();
+  } catch (error) {
+    setStatus('doctorStatus', `Suppression impossible : ${error.message}`, 'error');
+  }
+}
+
+function renderMembers(selected = new Set(currentMembers())) {
+  $('groupMembers').replaceChildren();
+  if (!doctors.length) {
+    $('groupMembers').textContent = 'Ajoutez d’abord des médecins.';
+    return;
+  }
+  doctors.forEach((doctor) => {
+    const label = document.createElement('label');
+    label.className = 'check';
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.value = doctor.id;
+    box.checked = selected.has(doctor.id);
+    label.append(box, document.createTextNode(doctorLabel(doctor)));
+    $('groupMembers').append(label);
+  });
+}
+
+const currentMembers = () => [...document.querySelectorAll('#groupMembers input:checked')].map((box) => Number(box.value));
+
+function renderGroups() {
+  $('groupRows').replaceChildren();
+  $('groupEmpty').hidden = groups.length > 0;
+  groups.forEach((group) => {
+    const row = document.createElement('tr');
+    const name = document.createElement('td');
+    const strong = document.createElement('strong');
+    strong.textContent = group.name;
+    name.append(strong);
+    if (group.description) {
+      const small = document.createElement('div');
+      small.className = 'muted';
+      small.textContent = group.description;
+      name.append(small);
+    }
+    const rights = document.createElement('td');
+    if (group.stats_access) rights.append(badge('Statistiques', 'ok'));
+    if (group.amounts_access) rights.append(badge('Montants', 'ok'));
+    if (group.billing_access) rights.append(badge('Facturation', 'ok'));
+    if (group.group_scope) rights.append(badge('Tout le groupe'));
+    if (!rights.childElementCount) rights.textContent = '—';
+    const members = document.createElement('td');
+    members.textContent = group.members.map((id) => doctors.find((d) => d.id === id)).filter(Boolean).map(doctorLabel).join(', ') || '—';
+    const actions = document.createElement('td');
+    const holder = document.createElement('div');
+    holder.className = 'row-actions';
+    holder.append(
+      iconButton('Modifier', ICON_EDIT, () => editGroup(group)),
+      iconButton('Supprimer', ICON_TRASH, () => deleteGroup(group), 'danger')
+    );
+    actions.append(holder);
+    row.append(name, rights, members, actions);
+    $('groupRows').append(row);
+  });
+}
+
+function resetGroupForm() {
+  $('groupForm').reset();
+  $('groupId').value = '';
+  $('groupFormTitle').textContent = 'Groupes de médecins';
+  $('saveGroup').textContent = 'Ajouter le groupe';
+  $('cancelGroup').hidden = true;
+  renderMembers(new Set());
+}
+
+function editGroup(group) {
+  $('groupId').value = group.id;
+  $('groupName').value = group.name;
+  $('groupDescription').value = group.description || '';
+  $('gStats').checked = group.stats_access;
+  $('gAmounts').checked = group.amounts_access;
+  $('gBilling').checked = group.billing_access;
+  $('gScope').checked = group.group_scope;
+  renderMembers(new Set(group.members));
+  $('groupFormTitle').textContent = `Modifier le groupe : ${group.name}`;
+  $('saveGroup').textContent = 'Enregistrer les modifications';
+  $('cancelGroup').hidden = false;
+  $('groupForm').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+async function saveGroup(event) {
+  event.preventDefault();
+  const id = $('groupId').value;
+  const body = {
+    name: $('groupName').value.trim(),
+    description: $('groupDescription').value.trim() || null,
+    stats_access: $('gStats').checked,
+    amounts_access: $('gAmounts').checked,
+    billing_access: $('gBilling').checked,
+    group_scope: $('gScope').checked,
+    members: currentMembers()
+  };
+  $('saveGroup').disabled = true;
+  try {
+    const result = await request(id ? `${API_BASE}/api/admin/doctor-groups/${id}` : `${API_BASE}/api/admin/doctor-groups`, sendJson(id ? 'PUT' : 'POST', body));
+    setStatus('groupStatus', id ? `Groupe « ${result.name} » mis à jour.` : `Groupe « ${result.name} » ajouté.`, 'success');
+    resetGroupForm();
+    await loadAll();
+  } catch (error) {
+    setStatus('groupStatus', `Enregistrement impossible : ${error.message}`, 'error');
+  } finally {
+    $('saveGroup').disabled = false;
+  }
+}
+
+async function deleteGroup(group) {
+  if (!(await askConfirm(`Supprimer le groupe « ${group.name} » ? Les médecins ne sont pas supprimés, ils perdent seulement les droits de ce groupe.`, 'Supprimer le groupe'))) return;
+  try {
+    await request(`${API_BASE}/api/admin/doctor-groups/${group.id}`, { method: 'DELETE' });
+    setStatus('groupStatus', `Groupe « ${group.name} » supprimé.`, 'success');
+    await loadAll();
+  } catch (error) {
+    setStatus('groupStatus', `Suppression impossible : ${error.message}`, 'error');
+  }
+}
+
+$('loginButton').onclick = login;
+$('logoutButton').onclick = () => logout();
+$('loginPassword').onkeydown = (event) => { if (event.key === 'Enter') login(); };
+$('loginUsername').onkeydown = (event) => { if (event.key === 'Enter') $('loginPassword').focus(); };
+$('doctorForm').addEventListener('submit', saveDoctor);
+$('cancelDoctor').onclick = resetDoctorForm;
+$('groupForm').addEventListener('submit', saveGroup);
+$('cancelGroup').onclick = resetGroupForm;
+$('doctorSearch').addEventListener('input', renderDoctors);
+
+async function initialize() {
+  if (window.AppAuth.token()) {
+    try {
+      currentUser = await request(`${API_BASE}/api/auth/me`);
+    } catch {
+      window.AppAuth.logout();
+      currentUser = null;
+    }
+  }
+  setAdminState();
+  if (!currentUser) setStatus('authStatus', 'Connectez-vous avec un compte administrateur.', 'info');
+  else if (!isAdmin()) setStatus('authStatus', 'Accès réservé aux administrateurs.', 'error');
+  else await loadAll();
+}
+initialize();
+</script>
+</body>
+</html>

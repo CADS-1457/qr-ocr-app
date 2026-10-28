@@ -25,6 +25,8 @@
     .table-wrap{overflow:auto;border:1px solid var(--border);border-radius:12px}table{width:100%;min-width:620px;border-collapse:collapse}th,td{padding:11px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:top}th{background:var(--primary);color:#fff;white-space:nowrap}
     tbody tr{cursor:pointer}tbody tr:hover{background:#f1f5f9}tbody tr[aria-selected="true"]{background:#dbeafe}
     .history-cell,.link-cell{text-align:center;white-space:nowrap}.history-link,.copy-history-link{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;padding:0;border:1px solid var(--border);border-radius:8px;background:#fff;color:var(--primary);cursor:pointer}.history-link:hover,.copy-history-link:hover{background:#dbeafe}.history-link svg,.copy-history-link svg{width:18px;height:18px}
+    .tool-icons{display:flex;gap:8px}.tool-btn{display:inline-flex;align-items:center;justify-content:center;width:46px;height:46px;border:1px solid var(--border);border-radius:12px;background:#fff;color:var(--primary);cursor:pointer;transition:background .15s,border-color .15s}.tool-btn:hover{background:#eff6ff;border-color:#93c5fd}.tool-btn:disabled{opacity:.55;cursor:wait}.tool-btn:focus-visible{outline:3px solid #93c5fd;outline-offset:2px}
+    .dup-box{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:14px;padding:14px;border:1px solid #fcd34d;border-radius:12px;background:#fffbeb;color:#92400e}.dup-text{display:flex;flex-direction:column;flex:1;min-width:220px}.dup-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.icon-x{border:0;background:transparent;color:#92400e;font-size:18px;cursor:pointer;padding:6px}
     .empty{text-align:center;padding:30px;color:var(--muted)}[hidden]{display:none!important}
     @media(max-width:760px){.form-grid{grid-template-columns:1fr 1fr}}
     @media(max-width:600px){body{padding:10px}.card{padding:15px}.header{align-items:stretch}.header .btn{width:100%}.login-grid,.form-grid{grid-template-columns:1fr}.login-grid .btn{width:100%}}
@@ -53,7 +55,17 @@
   <section id="patientsCard" class="card" hidden>
     <div class="toolbar">
       <h2>Patients enregistrés</h2>
-      <button id="refreshButton" class="btn secondary" type="button">Actualiser</button>
+      <div class="tool-icons" role="group" aria-label="Actions patients">
+        <button id="newManualButton" class="tool-btn" type="button" title="Créer un patient manuellement" aria-label="Créer un patient manuellement">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10" cy="8" r="4"/><path d="M2 21v-1a6 6 0 0 1 6-6h4"/><path d="M19 14v6M16 17h6"/></svg>
+        </button>
+        <button id="newEidButton" class="tool-btn" type="button" title="Créer un patient en lisant sa carte d’identité (eID)" aria-label="Créer un patient depuis la carte d’identité">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="2.5"/><circle cx="8.5" cy="11" r="2"/><path d="M5.5 16c.5-1.6 1.7-2.4 3-2.4s2.5.8 3 2.4M14 9.5h5M14 13h4"/></svg>
+        </button>
+        <button id="refreshButton" class="tool-btn" type="button" title="Actualiser la liste" aria-label="Actualiser la liste">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>
+        </button>
+      </div>
     </div>
     <div class="field" style="margin:16px 0">
       <label for="searchInput">Rechercher un patient</label>
@@ -70,7 +82,7 @@
   </section>
 
   <section id="editCard" class="card" hidden>
-    <h2>Modifier la fiche</h2>
+    <h2 id="editTitle">Modifier la fiche</h2>
     <p id="selectedPatientSummary" class="muted"></p>
     <form id="patientForm">
       <div class="form-grid">
@@ -135,6 +147,15 @@
         <button id="cancelButton" class="btn light" type="button">Annuler</button>
       </div>
     </form>
+    <div id="dupBox" class="dup-box" role="alert" hidden>
+      <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>
+      <div class="dup-text"><strong>Patient déjà enregistré</strong><span id="dupText"></span></div>
+      <div class="dup-actions">
+        <button id="dupUpdate" type="button" class="btn">Mettre à jour la fiche existante</button>
+        <button id="dupNew" type="button" class="btn light">Créer un nouveau signalétique</button>
+        <button id="dupCancel" type="button" class="icon-x" title="Fermer" aria-label="Fermer">✕</button>
+      </div>
+    </div>
     <div id="formStatus" class="status" aria-live="polite"></div>
   </section>
 </main>
@@ -219,6 +240,11 @@ function renderPatients() {
     normalize(`${patient.prenom} ${patient.nom} ${patient.date_naissance} ${patient.mobile || ''} ${patient.email || ''}`).includes(query)
   );
   $('patientRows').replaceChildren();
+  if (!query) {
+    $('emptyState').hidden = false;
+    $('emptyState').textContent = 'Saisissez un nom, un prénom, une date de naissance, un mobile ou un e-mail pour afficher les patients.';
+    return;
+  }
   $('emptyState').hidden = matches.length > 0;
   $('emptyState').textContent = patients.length
     ? 'Aucun patient ne correspond à la recherche.'
@@ -291,7 +317,41 @@ async function loadPhoto(patientId) {
   }
 }
 
+let creating = false;
+let dupChoice = null;
+let dupKnown = null;
+
+function resetDuplicate() {
+  dupChoice = null;
+  dupKnown = null;
+  $('dupBox').hidden = true;
+}
+
+function setCreating(value) {
+  creating = value;
+  resetDuplicate();
+  $('editTitle').textContent = value ? 'Nouveau patient' : 'Modifier la fiche';
+  $('saveButton').textContent = value ? 'Créer le patient' : 'Enregistrer les modifications';
+  $('newDispenseLink').hidden = value;
+}
+
+function startNewPatient() {
+  selectedPatient = null;
+  pendingPhoto = null;
+  $('patientForm').reset();
+  showPhoto(null);
+  setCreating(true);
+  $('eidStatus').textContent = 'Les champs peuvent être remplis à la main ou depuis la carte (photo et numéro national compris).';
+  $('selectedPatientSummary').textContent = 'Saisissez les informations ou lisez la carte d’identité.';
+  $('formStatus').className = 'status';
+  $('editCard').hidden = false;
+  renderPatients();
+  $('firstName').focus();
+  $('editCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 function selectPatient(patient) {
+  setCreating(false);
   selectedPatient = patient;
   pendingPhoto = null;
   $('nationalNumber').value = formatNationalNumber(patient.numero_national);
@@ -351,7 +411,7 @@ async function loadPatients() {
 
 async function savePatient(event) {
   event.preventDefault();
-  if (!currentUser || !selectedPatient) return;
+  if (!currentUser || (!selectedPatient && !creating)) return;
   const today = new Date();
   const todayValue = [
     today.getFullYear(),
@@ -364,6 +424,60 @@ async function savePatient(event) {
   }
   $('saveButton').disabled = true;
   try {
+    if (creating) {
+      if (!dupChoice) {
+        const params = new URLSearchParams({ nom: $('lastName').value.trim(), prenom: $('firstName').value.trim() });
+        if ($('birthDate').value) params.set('date_naissance', $('birthDate').value);
+        const national = $('nationalNumber').value.replace(/\D/g, '');
+        if (national) params.set('numero_national', national);
+        const matchResponse = await fetch(`${API}/agenda/patients/match?${params}`, { headers: window.AppAuth.headers() });
+        const known = matchResponse.ok ? await matchResponse.json() : null;
+        if (known && known.id) {
+          dupKnown = known;
+          $('dupText').textContent = `${known.prenom} ${known.nom}, né(e) le ${formatDate(known.date_naissance)}, existe déjà (n° ${known.id}).`;
+          $('dupBox').hidden = false;
+          $('dupBox').scrollIntoView({ behavior: 'smooth', block: 'center' });
+          return;
+        }
+      }
+      if (dupChoice === 'update') {
+        selectedPatient = { id: dupKnown.id };
+        $('dupBox').hidden = true;
+        dupChoice = null;
+        setCreating(false);
+      }
+    }
+    if (creating) {
+      const createBody = {
+        nom: $('lastName').value.trim(),
+        prenom: $('firstName').value.trim(),
+        date_naissance: $('birthDate').value,
+        prenoms: $('givenNames').value.trim() || null,
+        lieu_naissance: $('birthPlace').value.trim() || null,
+        sexe: $('sex').value || null,
+        nationalite: $('nationality').value.trim() || null,
+        adresse: $('street').value.trim() || null,
+        code_postal: $('postalCode').value.trim() || null,
+        commune: $('city').value.trim() || null,
+        numero_national: $('nationalNumber').value.replace(/\D/g, '') || null,
+        photo: pendingPhoto,
+        force: dupChoice === 'new'
+      };
+      const created = await fetch(`${API}/agenda/patients`, {
+        method: 'POST',
+        headers: window.AppAuth.headers({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify(createBody)
+      });
+      const createdResult = await created.json().catch(() => ({}));
+      if (!created.ok) {
+        throw new Error(typeof createdResult.detail === 'string' ? createdResult.detail : `HTTP ${created.status}`);
+      }
+      selectedPatient = { id: createdResult.id };
+      pendingPhoto = null;
+      dupChoice = null;
+      $('dupBox').hidden = true;
+      setCreating(false);
+    }
     const response = await fetch(`${API}/patients/${selectedPatient.id}`, {
       method: 'PATCH',
       headers: window.AppAuth.headers({ 'Content-Type': 'application/json' }),
@@ -446,7 +560,16 @@ $('logoutButton').addEventListener('click', () => logout());
 $('refreshButton').addEventListener('click', loadPatients);
 $('searchInput').addEventListener('input', renderPatients);
 $('patientForm').addEventListener('submit', savePatient);
-$('readEid').addEventListener('click', async () => {
+$('newManualButton').addEventListener('click', startNewPatient);
+$('dupUpdate').addEventListener('click', () => { dupChoice = 'update'; savePatient({ preventDefault() {} }); });
+$('dupNew').addEventListener('click', () => { dupChoice = 'new'; $('dupBox').hidden = true; savePatient({ preventDefault() {} }); });
+$('dupCancel').addEventListener('click', resetDuplicate);
+$('newEidButton').addEventListener('click', async () => {
+  startNewPatient();
+  await readEidCard();
+});
+$('readEid').addEventListener('click', readEidCard);
+async function readEidCard() {
   $('eidStatus').textContent = 'Lecture de la carte…';
   try {
     const card = await window.EidReader.read();
@@ -470,9 +593,10 @@ $('readEid').addEventListener('click', async () => {
   } catch (error) {
     $('eidStatus').textContent = error.message;
   }
-});
+}
 $('cancelButton').addEventListener('click', () => {
   selectedPatient = null;
+  setCreating(false);
   $('editCard').hidden = true;
   renderPatients();
 });
