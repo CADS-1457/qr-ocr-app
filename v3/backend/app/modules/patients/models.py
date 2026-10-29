@@ -1,4 +1,4 @@
-import uuid
+﻿import uuid
 from datetime import date, datetime
 
 from sqlalchemy import (
@@ -34,9 +34,12 @@ class Patient(Base):
         default=uuid.uuid4,
     )
 
-    # La contrainte FK vers core.organization existe déjà dans PostgreSQL.
-    # Elle sera également déclarée côté SQLAlchemy lorsque le module core
-    # possédera son modèle Organization.
+    # Les contraintes de clés étrangères vers core.organization et
+    # core.app_user existent dans PostgreSQL.
+    #
+    # Elles ne sont volontairement pas déclarées ici avec ForeignKey
+    # tant que les modèles SQLAlchemy du module core ne sont pas chargés
+    # dans les mêmes métadonnées.
     organization_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         nullable=False,
@@ -91,9 +94,19 @@ class Patient(Base):
         server_default=func.now(),
     )
 
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=True,
+    )
+
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
+    )
+
+    updated_by: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        nullable=True,
     )

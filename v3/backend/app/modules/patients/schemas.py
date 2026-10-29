@@ -1,4 +1,4 @@
-import uuid
+﻿import uuid
 from datetime import date, datetime
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -78,4 +78,7 @@ class PatientRead(BaseModel):
     active: bool
 
     created_at: datetime
+    created_by: uuid.UUID | None = None
+
     updated_at: datetime
+    updated_by: uuid.UUID | None = None
